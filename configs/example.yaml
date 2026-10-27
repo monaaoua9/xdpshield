@@ -1,0 +1,53 @@
+interface: eth0
+xdp_mode: auto            # auto = driver mode if the nic supports it, else generic
+listen: 127.0.0.1:9100    # /metrics, /healthz and the admin api
+admin_token_env: XDPSHIELD_TOKEN   # unset or empty env var = admin writes disabled
+
+encap_src: 10.0.0.1       # this lb's address, used as outer src of the ipip tunnel
+mtu: 1500                 # packets that would exceed this after +20 bytes of ipip are dropped
+hash_seed: 24301          # must be identical on every lb node
+
+ddos:
+  enabled: true
+  syn_limit_pps: 200      # per source ip per second, new connections only
+  udp_limit_pps: 2000
+  block_ttl: 60s
+  allow:
+    - 10.0.0.0/8          # monitoring, office, upstream health probes
+  deny:
+    - 192.0.2.0/24
+
+health:
+  enabled: true
+  interval: 2s
+  timeout: 500ms
+  fall: 3
+  rise: 2
+
+# mac is the next hop on this interface (backend itself on the same l2, or the gateway)
+backends:
+  - {name: web-1, address: 10.0.1.11, mac: "02:42:0a:00:01:0b"}
+  - {name: web-2, address: 10.0.1.12, mac: "02:42:0a:00:01:0c"}
+  - {name: web-3, address: 10.0.1.13, mac: "02:42:0a:00:01:0d", health_port: 8080}
+  - {name: dns-1, address: 10.0.1.21, mac: "02:42:0a:00:01:15"}
+  - {name: dns-2, address: 10.0.1.22, mac: "02:42:0a:00:01:16"}
+
+vips:
+  - name: web-https
+    address: 203.0.113.10
+    port: 443
+    proto: tcp
+    algorithm: maglev
+    backends:
+      - {name: web-1, weight: 100}
+      - {name: web-2, weight: 100}
+      - {name: web-3, weight: 50}
+
+  - name: dns
+    address: 203.0.113.10
+    port: 53
+    proto: udp
+    algorithm: wrr
+    backends:
+      - {name: dns-1, weight: 3}
+      - {name: dns-2, weight: 1}

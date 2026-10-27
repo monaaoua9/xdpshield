@@ -1,0 +1,256 @@
+package config
+
+import (
+	"bytes"
+	"fmt"
+	"net"
+	"net/netip"
+	"os"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	MaxVIPs     = 64
+	MaxBackends = 1024
+)
+
+type Config struct {
+	Interface string `yaml:"interface"`
+	XDPMode   string `yaml:"xdp_mode"` // auto, native, generic
+	Listen    string `yaml:"listen"`
+	// name of the env var holding the admin bearer token, empty = mutating admin routes disabled
+	AdminTokenEnv string `yaml:"admin_token_env"`
+
+	EncapSrc netip.Addr `yaml:"encap_src"`
+	MTU      int        `yaml:"mtu"`
+	HashSeed uint32     `yaml:"hash_seed"`
+
+	DDoS     DDoS      `yaml:"ddos"`
+	Health   Health    `yaml:"health"`
+	Backends []Backend `yaml:"backends"`
+	VIPs     []VIP     `yaml:"vips"`
+}
+
+type DDoS struct {
+	Enabled     bool           `yaml:"enabled"`
+	SynLimitPPS uint32         `yaml:"syn_limit_pps"`
+	UDPLimitPPS uint32         `yaml:"udp_limit_pps"`
+	BlockTTL    time.Duration  `yaml:"block_ttl"`
+	Allow       []netip.Prefix `yaml:"allow"`
+	Deny        []netip.Prefix `yaml:"deny"`
+}
+
+type Health struct {
+	Enabled  bool          `yaml:"enabled"`
+	Interval time.Duration `yaml:"interval"`
+	Timeout  time.Duration `yaml:"timeout"`
+	Fall     int           `yaml:"fall"`
+	Rise     int           `yaml:"rise"`
+}
+
+type Backend struct {
+	Name       string     `yaml:"name"`
+	Address    netip.Addr `yaml:"address"`
+	MAC        string     `yaml:"mac"` // next hop mac on the lb's interface
+	HealthPort uint16     `yaml:"health_port"`
+}
+
+type VIP struct {
+	Name      string      `yaml:"name"`
+	Address   netip.Addr  `yaml:"address"`
+	Port      uint16      `yaml:"port"`
+	Proto     string      `yaml:"proto"`
+	Algorithm string      `yaml:"algorithm"` // maglev, wrr
+	Backends  []VIPMember `yaml:"backends"`
+}
+
+type VIPMember struct {
+	Name   string `yaml:"name"`
+	Weight uint32 `yaml:"weight"`
+}
+
+func Load(path string) (*Config, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return Parse(raw)
+}
+
+func Parse(raw []byte) (*Config, error) {
+	var c Config
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	c.defaults()
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (c *Config) defaults() {
+	if c.XDPMode == "" {
+		c.XDPMode = "auto"
+	}
+	if c.Listen == "" {
+		c.Listen = "127.0.0.1:9100"
+	}
+	if c.MTU == 0 {
+		c.MTU = 1500
+	}
+	if c.HashSeed == 0 {
+		c.HashSeed = 0x5eed
+	}
+	d := &c.DDoS
+	if d.SynLimitPPS == 0 {
+		d.SynLimitPPS = 200
+	}
+	if d.UDPLimitPPS == 0 {
+		d.UDPLimitPPS = 2000
+	}
+	if d.BlockTTL == 0 {
+		d.BlockTTL = 60 * time.Second
+	}
+	h := &c.Health
+	if h.Interval == 0 {
+		h.Interval = 2 * time.Second
+	}
+	if h.Timeout == 0 {
+		h.Timeout = 500 * time.Millisecond
+	}
+	if h.Fall == 0 {
+		h.Fall = 3
+	}
+	if h.Rise == 0 {
+		h.Rise = 2
+	}
+	for i := range c.VIPs {
+		v := &c.VIPs[i]
+		if v.Proto == "" {
+			v.Proto = "tcp"
+		}
+		if v.Algorithm == "" {
+			v.Algorithm = "maglev"
+		}
+		for j := range v.Backends {
+			if v.Backends[j].Weight == 0 {
+				v.Backends[j].Weight = 1
+			}
+		}
+	}
+}
+
+func (c *Config) Validate() error {
+	if c.Interface == "" {
+		return fmt.Errorf("interface is required")
+	}
+	switch c.XDPMode {
+	case "auto", "native", "generic":
+	default:
+		return fmt.Errorf("xdp_mode %q: want auto, native or generic", c.XDPMode)
+	}
+	if !c.EncapSrc.Is4() {
+		return fmt.Errorf("encap_src must be an ipv4 address")
+	}
+	if c.MTU < 576 || c.MTU > 9216 {
+		return fmt.Errorf("mtu %d out of range", c.MTU)
+	}
+	if len(c.VIPs) > MaxVIPs {
+		return fmt.Errorf("too many vips (%d > %d)", len(c.VIPs), MaxVIPs)
+	}
+	if len(c.Backends) > MaxBackends {
+		return fmt.Errorf("too many backends (%d > %d)", len(c.Backends), MaxBackends)
+	}
+
+	for _, p := range append(append([]netip.Prefix{}, c.DDoS.Allow...), c.DDoS.Deny...) {
+		if !p.Addr().Is4() {
+			return fmt.Errorf("cidr %s: only ipv4 is supported", p)
+		}
+	}
+
+	bes := map[string]Backend{}
+	addrs := map[netip.Addr]string{}
+	for _, b := range c.Backends {
+		if b.Name == "" {
+			return fmt.Errorf("backend without a name")
+		}
+		if _, dup := bes[b.Name]; dup {
+			return fmt.Errorf("duplicate backend %q", b.Name)
+		}
+		if !b.Address.Is4() {
+			return fmt.Errorf("backend %s: address must be ipv4", b.Name)
+		}
+		if other, dup := addrs[b.Address]; dup {
+			return fmt.Errorf("backend %s and %s share address %s", b.Name, other, b.Address)
+		}
+		if _, err := net.ParseMAC(b.MAC); err != nil {
+			return fmt.Errorf("backend %s: bad mac: %w", b.Name, err)
+		}
+		bes[b.Name] = b
+		addrs[b.Address] = b.Name
+	}
+
+	type key struct {
+		a netip.Addr
+		p uint16
+		t string
+	}
+	seen := map[key]bool{}
+	names := map[string]bool{}
+	for _, v := range c.VIPs {
+		if v.Name == "" || names[v.Name] {
+			return fmt.Errorf("vip name %q missing or duplicated", v.Name)
+		}
+		names[v.Name] = true
+		if !v.Address.Is4() {
+			return fmt.Errorf("vip %s: address must be ipv4", v.Name)
+		}
+		if v.Port == 0 {
+			return fmt.Errorf("vip %s: port is required", v.Name)
+		}
+		if v.Proto != "tcp" && v.Proto != "udp" {
+			return fmt.Errorf("vip %s: proto %q", v.Name, v.Proto)
+		}
+		if v.Algorithm != "maglev" && v.Algorithm != "wrr" {
+			return fmt.Errorf("vip %s: algorithm %q", v.Name, v.Algorithm)
+		}
+		k := key{v.Address, v.Port, v.Proto}
+		if seen[k] {
+			return fmt.Errorf("vip %s duplicates another vip", v.Name)
+		}
+		seen[k] = true
+		if len(v.Backends) == 0 {
+			return fmt.Errorf("vip %s has no backends", v.Name)
+		}
+		for _, m := range v.Backends {
+			if _, ok := bes[m.Name]; !ok {
+				return fmt.Errorf("vip %s references unknown backend %q", v.Name, m.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// HealthPortFor falls back to the port of the first tcp vip using the backend.
+// 0 means we have nothing to probe.
+func (c *Config) HealthPortFor(b Backend) uint16 {
+	if b.HealthPort != 0 {
+		return b.HealthPort
+	}
+	for _, v := range c.VIPs {
+		if v.Proto != "tcp" {
+			continue
+		}
+		for _, m := range v.Backends {
+			if m.Name == b.Name {
+				return v.Port
+			}
+		}
+	}
+	return 0
+}
