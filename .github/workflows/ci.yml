@@ -1,0 +1,32 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make lint
+      - run: make test-unit
+
+  bpf:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y clang llvm libbpf-dev linux-libc-dev
+      - name: rebuild the bpf object with clang
+        run: |
+          export BPF2GO_CFLAGS="-I/usr/include/$(uname -m)-linux-gnu"
+          make generate
+      - name: load in the kernel verifier and run packets through it
+        run: |
+          go test -c -tags integration -o /tmp/dataplane.test ./internal/dataplane/
+          sudo /tmp/dataplane.test -test.v
