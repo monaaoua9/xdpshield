@@ -1,0 +1,26 @@
+[Unit]
+Description=xdpshield XDP load balancer and DDoS filter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStartPre=/usr/local/bin/xdpshield -check -config /etc/xdpshield/config.yaml
+ExecStart=/usr/local/bin/xdpshield -config /etc/xdpshield/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+EnvironmentFile=-/etc/xdpshield/env
+Restart=on-failure
+RestartSec=2
+
+# bpf() and xdp attach need these, nothing else
+AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_PERFMON CAP_SYS_RESOURCE
+CapabilityBoundingSet=CAP_BPF CAP_NET_ADMIN CAP_PERFMON CAP_SYS_RESOURCE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
