@@ -73,13 +73,30 @@ make test-integration     # root, linux: loads the real program and runs crafted
 test/lab.sh up && test/lab.sh test    # end to end with network namespaces
 ```
 
-The integration suite covers encapsulation (headers, checksum, MACs), flow stickiness, Maglev spread, WRR ratio, SYN/UDP flood blocking and unblocking, ring buffer events, allow/deny lists, bad flags, malformed frames, fragments and MTU drops.
+The integration suite covers encapsulation (headers, checksum, MACs), flow stickiness, Maglev spread, WRR ratio, SYN/UDP flood blocking and unblocking, ring buffer events, allow/deny lists, bad flags, malformed frames, fragments, MTU drops and the ICMP frag-needed reply.
+
+## Performance
+
+Program cost only, measured with `BPF_PROG_TEST_RUN` (3M runs per case, kernel-side timing): no driver, no DMA, no skb. Intel i5-8365U @ 1.6 GHz, 2 vCPUs, WSL2 kernel 6.6, single core. Reproduce with `sudo go test -tags integration -run xxx -bench XDP ./internal/dataplane/`.
+
+| path | ns/pkt | Mpps/core |
+|---|---|---|
+| non-IP, passed to the stack | 80 | 12.5 |
+| host traffic (not a VIP), passed | 279 | 3.6 |
+| dropped by deny CIDR (LPM) | 225 | 4.4 |
+| dropped by dynamic blocklist | 217 | 4.6 |
+| dropped, bad TCP flags | 311 | 3.2 |
+| LB, established TCP flow (conntrack hit, ipip encap) | 213 | 4.7 |
+| LB, TCP SYN (rate check, hash, encap) | 189 | 5.3 |
+| LB, UDP weighted round robin | 183 | 5.5 |
+
+These are ceilings for the program on a slow laptop core, not NIC throughput: a real run adds driver and memory costs, and native XDP on a 10G NIC was not tried. For scale, a blocklisted source costs about 220 ns per packet before the kernel allocates anything.
 
 ## Status
 
 Unit tests pass. The program loads under the verifier of a 6.6 kernel (WSL2, clang 21) and all twelve `BPF_PROG_TEST_RUN` integration tests pass. The first load was rejected for an unbounded `tot_len` after the byte swap; that is fixed in `parsing.h`. `test/lab.sh` also ran on that kernel (generic XDP, netns): 20 requests to the VIP were answered through the IPIP path and the SYN flood got the client blocked. The lab backends share one /tmp, so it can't show the split between them; the integration tests cover that. Other kernels and NIC drivers (native XDP) have not been tried; CI runs the integration suite on every push.
 
-Known gaps are listed at the end of the architecture doc: IPv4 only, no SYN cookies, no ICMP frag-needed on MTU drops.
+Known gaps are listed at the end of the architecture doc: IPv4 only, no SYN cookies.
 
 ## License
 
