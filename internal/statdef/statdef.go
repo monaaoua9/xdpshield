@@ -37,6 +37,7 @@ var Names = []string{
 	"drop_no_backend",
 	"drop_mtu",
 	"drop_encap",
+	"icmp_frag_needed",
 }
 
 // block reasons as written by the datapath

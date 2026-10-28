@@ -190,6 +190,78 @@ static __always_inline int encap_ipip(struct xdp_md *ctx, const struct backend *
     return 0;
 }
 
+/*
+ * Client sent a DF packet that won't fit once we add 20 bytes. Turn the frame
+ * into an icmp "fragmentation needed" back to the sender (from the vip) so path
+ * mtu discovery works, then the caller returns XDP_TX. Reply is 70 bytes, never
+ * bigger than what we got, so this can't amplify.
+ */
+#define ICMP_REPLY_LEN (sizeof(struct ethhdr) + 20 + 8 + 28)
+
+struct icmp_unreach {
+    __u8 type;
+    __u8 code;
+    __sum16 check;
+    __be16 unused;
+    __be16 mtu;
+};
+
+static __always_inline int icmp_frag_needed(struct xdp_md *ctx, const struct global_cfg *cfg)
+{
+    void *data = (void *)(long)ctx->data;
+    void *end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth = data;
+    struct iphdr *ip = (void *)(eth + 1);
+    struct icmp_unreach *ic = (void *)(ip + 1);
+    __u8 quote[28], mac[ETH_ALEN];
+    __be32 client, vip;
+    __u32 sum = 0, len = end - data;
+    __u16 *w;
+
+    if (data + ICMP_REPLY_LEN > end || ip->ihl != 5)
+        return -1;
+
+    client = ip->saddr;
+    vip = ip->daddr;
+    __builtin_memcpy(quote, ip, sizeof(quote));
+    __builtin_memcpy(mac, eth->h_source, ETH_ALEN);
+    __builtin_memcpy(eth->h_source, eth->h_dest, ETH_ALEN);
+    __builtin_memcpy(eth->h_dest, mac, ETH_ALEN);
+
+    /* original header + 8 bytes land right after the icmp header */
+    __builtin_memcpy((void *)(ic + 1), quote, sizeof(quote));
+    ic->type = 3;
+    ic->code = 4;
+    ic->check = 0;
+    ic->unused = 0;
+    ic->mtu = bpf_htons(cfg->max_ip_len - sizeof(struct iphdr));
+    w = (__u16 *)ic;
+#pragma unroll
+    for (int i = 0; i < 18; i++)
+        sum += w[i];
+    sum = (sum & 0xffff) + (sum >> 16);
+    sum = (sum & 0xffff) + (sum >> 16);
+    ic->check = ~sum;
+
+    ip->version = 4;
+    ip->ihl = 5;
+    ip->tos = 0;
+    ip->tot_len = bpf_htons(20 + 8 + 28);
+    ip->id = 0;
+    ip->frag_off = 0;
+    ip->ttl = 64;
+    ip->protocol = 1;
+    ip->saddr = vip;
+    ip->daddr = client;
+    ip->check = 0;
+    ip->check = ip_csum(ip);
+
+    /* last, the pointers are gone after this */
+    if (bpf_xdp_adjust_tail(ctx, (int)ICMP_REPLY_LEN - (int)len))
+        return -1;
+    return 0;
+}
+
 static __always_inline int pick_backend(const struct global_cfg *cfg, const struct vip_val *vip,
                                         const struct flow_key *fk, __u32 *out)
 {
@@ -333,8 +405,14 @@ int xdp_shield(struct xdp_md *ctx)
         stat_add(STAT_ALLOWLISTED, 1);
     }
 
-    if (bpf_ntohs(p.ip->tot_len) + sizeof(struct iphdr) > cfg->max_ip_len)
-        return drop(STAT_DROP_MTU);
+    if (bpf_ntohs(p.ip->tot_len) + sizeof(struct iphdr) > cfg->max_ip_len) {
+        stat_add(STAT_DROP_MTU, 1);
+        if ((p.ip->frag_off & bpf_htons(0x4000)) && icmp_frag_needed(ctx, cfg) == 0) {
+            stat_add(STAT_ICMP_FRAG_NEEDED, 1);
+            return XDP_TX;
+        }
+        return XDP_DROP;
+    }
 
     fk.src = p.ip->saddr;
     fk.dst = p.ip->daddr;

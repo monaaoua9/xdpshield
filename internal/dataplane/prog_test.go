@@ -392,6 +392,43 @@ func TestMalformedAndFragments(t *testing.T) {
 	}
 }
 
+func TestOversizeDFGetsFragNeeded(t *testing.T) {
+	p := setup(t)
+	client := netip.MustParseAddr("8.8.8.8")
+	big := frame(ipPkt(6, client, vipIP, 0x4000, append(tcpHdr(1234, 443, ack), make([]byte, 1460)...)))
+
+	ret, out := run(t, p, big)
+	if ret != xdpTX {
+		t.Fatalf("got %d", ret)
+	}
+	if len(out) != 70 {
+		t.Fatalf("reply is %d bytes", len(out))
+	}
+	// macs swapped back to the sender
+	if !bytes.Equal(out[0:6], cliMAC) || !bytes.Equal(out[6:12], lbMAC) {
+		t.Fatalf("macs % x / % x", out[0:6], out[6:12])
+	}
+	ip, ic := out[14:34], out[34:]
+	if csum(ip) != 0 || csum(ic) != 0 {
+		t.Fatal("bad checksum")
+	}
+	if ip[9] != 1 || netip.AddrFrom4([4]byte(ip[12:16])) != vipIP || netip.AddrFrom4([4]byte(ip[16:20])) != client {
+		t.Fatalf("ip header % x", ip)
+	}
+	if ic[0] != 3 || ic[1] != 4 {
+		t.Fatalf("icmp type/code %d/%d", ic[0], ic[1])
+	}
+	if mtu := binary.BigEndian.Uint16(ic[6:]); mtu != 1480 {
+		t.Fatalf("advertised mtu %d", mtu)
+	}
+	if !bytes.Equal(ic[8:], big[14:42]) {
+		t.Fatal("quoted packet differs from the original")
+	}
+	if counter(t, p, "icmp_frag_needed") != 1 || counter(t, p, "drop_mtu") != 1 {
+		t.Fatal("counters")
+	}
+}
+
 func TestOversizeDropped(t *testing.T) {
 	p := setup(t)
 	big := frame(ipPkt(17, netip.MustParseAddr("8.8.8.8"), vipIP, 0, make([]byte, 1475)))

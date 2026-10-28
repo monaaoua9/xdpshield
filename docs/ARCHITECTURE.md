@@ -30,7 +30,8 @@ The datapath never decides policy. Thresholds, backend sets, weights and lists a
         │     syn  : rate_state[src].syn > limit ─► blocklist + event  DROP  │
         │     udp  : rate_state[src].udp > limit ─► blocklist + event  DROP  │
         │                                                                    │
-        │ 5 mtu: tot_len + 20 > max_ip_len ───────────────────────► DROP     │
+        │ 5 mtu: tot_len + 20 > max_ip_len  DF ─► icmp frag needed ─► TX     │
+        │                                  no DF ─► DROP                    │
         │                                                                    │
         │ 6 backend selection                                                │
         │     conn_track[5-tuple] hit and backend active ─► use it           │
@@ -109,6 +110,6 @@ config.yaml ──► config.Load (strict parse, validation)
 - IPv4 only.
 - No SYN cookies; SYN floods are handled by per-source rate limits, which does nothing against a spoofed-source flood spread over millions of addresses. Pair with upstream scrubbing for volumetric attacks.
 - Rate windows are fixed 1s and roll over without a lock, so counts can be off by a few packets around the boundary.
-- Packets that would exceed the MTU after encapsulation are dropped without an ICMP "frag needed". Clamp MSS on the backends.
+- A DF packet that would exceed the MTU after encapsulation gets an ICMP "fragmentation needed" (type 3 code 4, advertised mtu = `mtu - 20`) sent back from the VIP, 70 bytes, built in place and sent with `XDP_TX`. Without DF the packet is dropped. Clamp MSS on the backends anyway.
 - WRR cursors are per CPU, so short runs are only approximately proportional.
 - Single VLAN-untagged Ethernet only; tagged frames are passed to the host.
