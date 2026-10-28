@@ -32,7 +32,9 @@ up() {
 
   for n in be1 be2; do
     ip netns exec $n bash deploy/backend-setup.sh $VIP >/dev/null
-    ip netns exec $n sh -c "echo backend-$n > /tmp/$n.txt; cd /tmp && nohup python3 -m http.server 80 >/dev/null 2>&1 &"
+    # netns don't isolate the filesystem, so each backend serves its own dir
+    mkdir -p /tmp/lab-$n && echo backend-$n > /tmp/lab-$n/index.html
+    ip netns exec $n sh -c "cd /tmp/lab-$n && nohup python3 -m http.server 80 >/dev/null 2>&1 &"
   done
 
   cat > $CFG <<EOF
@@ -55,14 +57,20 @@ EOF
 }
 
 test_() {
-  echo "--- 20 requests through the vip"
-  for i in $(seq 20); do ip netns exec client curl -s --max-time 2 --local-port $((40000+i)) http://$VIP/ || true; done | sort | uniq -c
+  echo "--- 40 requests through the vip"
+  got=$(for i in $(seq 40); do ip netns exec client curl -s --max-time 2 --local-port $((40000+i)) http://$VIP/ || true; done | sort | uniq -c)
+  echo "$got"
+  # both backends must have answered, and nothing should have timed out
+  [ "$(echo "$got" | grep -c backend-)" = 2 ] || { echo "FAIL: traffic did not reach both backends"; return 1; }
+  [ "$(echo "$got" | awk '{s+=$1} END {print s}')" = 40 ] || { echo "FAIL: lost requests"; return 1; }
+
   echo "--- syn flood from the client (needs hping3)"
   if command -v hping3 >/dev/null; then
     ip netns exec client hping3 -S -p 80 --faster -c 2000 $VIP >/dev/null 2>&1 || true
+    ip netns exec lb curl -s localhost:9100/api/v1/blocklist | grep -q 10.77.0.1 || { echo "FAIL: flooder not blocked"; return 1; }
   fi
-  curl -s localhost:9100/api/v1/blocklist; echo
-  curl -s localhost:9100/metrics | grep -E 'xdpshield_(dropped|forwarded|sources)' | grep -v ' 0$'
+  ip netns exec lb curl -s localhost:9100/api/v1/blocklist; echo
+  ip netns exec lb curl -s localhost:9100/metrics | grep -E 'xdpshield_(dropped|forwarded|sources)' | grep -v ' 0$'
 }
 
 down() {
