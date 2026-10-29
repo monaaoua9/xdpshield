@@ -16,7 +16,7 @@ client ─► NIC ─► [ XDP: validate ─► blocklist ─► rate limit ─�
 - **Health checks**: TCP probes with fall/rise thresholds; unhealthy backends leave the table without touching other flows.
 - **Observability**: Prometheus counters read from per-CPU maps on scrape, ring buffer for block events, small admin API.
 
-Design details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), verifier notes in [docs/VERIFIER.md](docs/VERIFIER.md).
+Design details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (shorter version: [docs/DESIGN.md](docs/DESIGN.md)), verifier notes in [docs/VERIFIER.md](docs/VERIFIER.md).
 
 ## Layout
 
