@@ -77,7 +77,7 @@ The integration suite covers encapsulation (headers, checksum, MACs), flow stick
 
 ## Performance
 
-Program cost only, measured with `BPF_PROG_TEST_RUN` (3M runs per case, kernel-side timing): no driver, no DMA, no skb. Intel i5-8365U @ 1.6 GHz, 2 vCPUs, WSL2 kernel 6.6, single core. Reproduce with `sudo go test -tags integration -run xxx -bench XDP ./internal/dataplane/`.
+Program cost only, measured with `BPF_PROG_TEST_RUN` (3M runs per case, kernel-side timing): no driver, no DMA, no skb. Intel i5-8365U @ 1.6 GHz, 2 vCPUs, WSL2 kernel 6.6, single core. The table is the median of three runs; ranges and the exact commands are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md). Reproduce with `sudo go test -tags integration -run xxx -bench XDP ./internal/dataplane/`.
 
 | path | ns/pkt | Mpps/core |
 |---|---|---|
