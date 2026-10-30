@@ -2,6 +2,7 @@
 #define XDPSHIELD_PARSING_H
 
 #include <linux/ip.h>
+#include <linux/ipv6.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <linux/in.h>
@@ -37,6 +38,19 @@ static __always_inline int martian_src(__be32 src)
     if ((a >> 24) == 127)       /* loopback */
         return 1;
     if ((a >> 28) == 0xe)       /* multicast 224/4 */
+        return 1;
+    return 0;
+}
+
+static __always_inline int martian_src6(const struct addr6 *a)
+{
+    __u64 hi, lo;
+
+    __builtin_memcpy(&hi, a->b, 8);
+    __builtin_memcpy(&lo, a->b + 8, 8);
+    if (a->b[0] == 0xff)                /* multicast */
+        return 1;
+    if (hi == 0 && (lo == 0 || lo == bpf_cpu_to_be64(1)))   /* :: and ::1 */
         return 1;
     return 0;
 }

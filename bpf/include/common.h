@@ -23,6 +23,7 @@
 #endif
 
 #define IPPROTO_IPIP_N  4
+#define IPPROTO_6IN4    41
 
 enum cfg_flags {
     CFG_DDOS_ENABLED = 1 << 0,
@@ -129,6 +130,31 @@ struct lpm_key {
     __be32 addr;
 };
 
+struct addr6 {
+    __u8 b[16];
+};
+
+struct vip_key6 {
+    struct addr6 addr;
+    __be16 port;
+    __u8 proto;
+    __u8 pad;
+};
+
+struct flow_key6 {
+    struct addr6 src;
+    struct addr6 dst;
+    __be16 sport;
+    __be16 dport;
+    __u8 proto;
+    __u8 pad[3];
+};
+
+struct lpm_key6 {
+    __u32 prefixlen;
+    struct addr6 addr;
+};
+
 struct lpm_val {
     __u32 flags;
 };
@@ -140,10 +166,12 @@ struct traffic_stat {
 
 struct block_event {
     __u64 ts_ns;
-    __be32 src;
+    __be32 src;         /* v4 source, unused when family is 6 */
     __u32 reason;
     __u32 observed_pps;
-    __u32 pad;
+    __u8 family;        /* 4 or 6 */
+    __u8 pad[3];
+    struct addr6 src6;
 };
 
 #endif
