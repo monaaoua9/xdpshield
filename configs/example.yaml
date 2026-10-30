@@ -12,6 +12,9 @@ ddos:
   syn_limit_pps: 200      # per source ip per second, new connections only
   udp_limit_pps: 2000
   block_ttl: 60s
+  amplification:          # drop reflected answers (src port below) that hit a vip address but no vip
+    ports: [53, 123, 161, 389, 1900, 11211]
+    min_size: 100         # udp length incl. header; smaller packets pass
   allow:
     - 10.0.0.0/8          # monitoring, office, upstream health probes
   deny:

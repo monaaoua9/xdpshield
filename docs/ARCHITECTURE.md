@@ -100,6 +100,10 @@ config.yaml ──► config.Load (strict parse, validation)
 - If every backend of a VIP fails health checks the table is built from all of them. Dropping everything is worse than trying.
 - A table identical to the one already installed is not rewritten.
 
+## Amplification filter
+
+`ddos.amplification.ports` lists UDP source ports used by reflection attacks. A UDP packet whose source port is in that list, aimed at one of our VIP addresses but matching no VIP (the destination port is a random victim port), is dropped when its UDP length is at least `min_size`. Nothing behind the balancer sent a query, so there is nothing legitimate to lose, unless a backend itself resolves through the VIP address: allowlist those. A VIP that really serves one of the ports (DNS on 53) is untouched because the VIP lookup happens first. Packets for addresses that aren't VIPs go to the host stack as before. Counted as `drop_amplification`.
+
 ## Observability
 
 - `/metrics` (Prometheus): counters are read from the kernel on scrape, there is no polling loop. Drops are one metric with a `reason` label. Per-VIP and per-backend traffic, backend health.
