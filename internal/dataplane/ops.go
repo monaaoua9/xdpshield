@@ -69,17 +69,19 @@ func (p *Plane) DelBackend(id uint32) error {
 	return p.objs.BackendMap.Put(id, &ShieldBackend{})
 }
 
-func vipKey(k controller.VIPKey) ShieldVipKey {
-	proto := uint8(6)
-	if k.UDP {
-		proto = 17
+func protoNum(udp bool) uint8 {
+	if udp {
+		return 17
 	}
-	return ShieldVipKey{Addr: addr32(k.Addr), Port: port16(k.Port), Proto: proto}
+	return 6
+}
+
+func vipKey(k controller.VIPKey) ShieldVipKey {
+	return ShieldVipKey{Addr: addr32(k.Addr), Port: port16(k.Port), Proto: protoNum(k.UDP)}
 }
 
 func vipKey6(k controller.VIPKey) ShieldVipKey6 {
-	v := vipKey(controller.VIPKey{Port: k.Port, UDP: k.UDP})
-	return ShieldVipKey6{Addr: addr6(k.Addr), Port: v.Port, Proto: v.Proto}
+	return ShieldVipKey6{Addr: addr6(k.Addr), Port: port16(k.Port), Proto: protoNum(k.UDP)}
 }
 
 // SetVIP builds a fresh inner table, swaps it into the outer map and only then
