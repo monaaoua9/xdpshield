@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,6 +43,9 @@ type DDoS struct {
 	BlockTTL    time.Duration  `yaml:"block_ttl"`
 	Allow       []netip.Prefix `yaml:"allow"`
 	Deny        []netip.Prefix `yaml:"deny"`
+	// files of prefixes (country zones, drop lists...) merged into allow/deny on load
+	AllowLists []string `yaml:"allow_lists"`
+	DenyLists  []string `yaml:"deny_lists"`
 
 	Amplification Amplification `yaml:"amplification"`
 }
@@ -92,7 +96,17 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Parse(raw)
+	c, err := Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.expandLists(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("cidr lists: %w", err)
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func Parse(raw []byte) (*Config, error) {
@@ -196,6 +210,13 @@ func (c *Config) Validate() error {
 		if !p.IsValid() || p.Addr().Is4In6() {
 			return fmt.Errorf("cidr %s: use a plain ipv4 or ipv6 prefix", p)
 		}
+	}
+
+	if err := checkCIDRCount("allow", c.DDoS.Allow); err != nil {
+		return err
+	}
+	if err := checkCIDRCount("deny", c.DDoS.Deny); err != nil {
+		return err
 	}
 
 	amp := c.DDoS.Amplification
