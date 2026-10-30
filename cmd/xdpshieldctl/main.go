@@ -24,6 +24,7 @@ const usage = `usage: xdpshieldctl [-addr url] [-token t] <command>
   unblock <ip>            (needs token)
   events [n]              recent block events, newest first
   stats                   datapath counters from /metrics
+  top [seconds]           live rates, refreshed until ctrl-c
 `
 
 type client struct {
@@ -136,6 +137,17 @@ func run(args []string, out, errw io.Writer) int {
 		err = c.events(out, n)
 	case "stats":
 		err = c.stats(out)
+	case "top":
+		every := time.Second
+		if len(rest) > 0 {
+			n, convErr := strconv.Atoi(rest[0])
+			if convErr != nil || n <= 0 {
+				fmt.Fprintln(errw, "top: seconds must be a positive number")
+				return 2
+			}
+			every = time.Duration(n) * time.Second
+		}
+		err = c.top(out, every)
 	default:
 		fmt.Fprint(errw, usage)
 		return 2

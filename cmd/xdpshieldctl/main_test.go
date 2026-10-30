@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func fakeAPI(t *testing.T) *httptest.Server {
@@ -114,5 +115,41 @@ func TestUsageErrors(t *testing.T) {
 		if code, _, _ := ctl(t, srv, args...); code != 2 {
 			t.Errorf("%v: exit %d", args, code)
 		}
+	}
+}
+
+func TestRenderRates(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	prev := &sample{at: t0, val: parseMetrics([]byte(
+		"xdpshield_rx_packets_total 1000\n" +
+			"xdpshield_dropped_packets_total{reason=\"syn_flood\"} 0\n" +
+			"xdpshield_dropped_packets_total{reason=\"mtu\"} 5\n" +
+			"xdpshield_backend_packets_total{backend=\"a\"} 100\n"))}
+	cur := &sample{at: t0.Add(2 * time.Second), val: parseMetrics([]byte(
+		"xdpshield_rx_packets_total 21000\n" +
+			"xdpshield_dropped_packets_total{reason=\"syn_flood\"} 4000\n" +
+			"xdpshield_dropped_packets_total{reason=\"mtu\"} 5\n" +
+			"xdpshield_backend_packets_total{backend=\"a\"} 300\n"))}
+
+	got := render(prev, cur,
+		[]topBackend{{"a", true}, {"b", false}},
+		[]topEvent{{t0, "1.2.3.4", "syn_flood", 900}})
+
+	for _, want := range []string{"10.0k pps", "syn_flood", "2000", "DOWN", "1.2.3.4"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\nmtu") {
+		t.Errorf("idle drop reason shown:\n%s", got)
+	}
+}
+
+func TestRateIgnoresCounterReset(t *testing.T) {
+	t0 := time.Now()
+	prev := &sample{at: t0, val: map[string]float64{"x": 500}}
+	cur := &sample{at: t0.Add(time.Second), val: map[string]float64{"x": 10}}
+	if r := rate(prev, cur, "x"); r != 0 {
+		t.Fatalf("got %v", r)
 	}
 }
