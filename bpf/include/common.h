@@ -29,6 +29,8 @@
 enum cfg_flags {
     CFG_DDOS_ENABLED = 1 << 0,
     CFG_STRICT_TCP   = 1 << 1,  /* drop non-syn tcp for vips with no tracked flow */
+    CFG_HAVE_DENY    = 1 << 2,  /* deny/allow tries have entries, skip the lookup when they don't */
+    CFG_HAVE_ALLOW   = 1 << 3,
 };
 
 enum lb_algo {
