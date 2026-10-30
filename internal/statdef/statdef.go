@@ -70,4 +70,6 @@ const (
 const (
 	FlagDDoSEnabled = 1
 	FlagStrictTCP   = 2
+	FlagHaveDeny    = 4
+	FlagHaveAllow   = 8
 )

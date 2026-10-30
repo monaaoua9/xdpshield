@@ -24,6 +24,8 @@ const (
 type Global struct {
 	DDoS        bool
 	StrictTCP   bool
+	HaveDeny    bool // lets the datapath skip the trie lookups when there is nothing to find
+	HaveAllow   bool
 	SynLimitPPS uint32
 	UDPLimitPPS uint32
 	BlockTTL    time.Duration
@@ -122,6 +124,8 @@ func (c *Controller) reconcile() error {
 	g := Global{
 		DDoS:        cfg.DDoS.Enabled,
 		StrictTCP:   cfg.DDoS.Enabled && cfg.DDoS.DropOrphanTCP,
+		HaveDeny:    len(cfg.DDoS.Deny) > 0,
+		HaveAllow:   len(cfg.DDoS.Allow) > 0,
 		SynLimitPPS: cfg.DDoS.SynLimitPPS,
 		UDPLimitPPS: cfg.DDoS.UDPLimitPPS,
 		BlockTTL:    cfg.DDoS.BlockTTL,

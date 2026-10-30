@@ -48,6 +48,12 @@ func (p *Plane) SetGlobal(g controller.Global) error {
 	if g.StrictTCP {
 		flags |= statdef.FlagStrictTCP
 	}
+	if g.HaveDeny {
+		flags |= statdef.FlagHaveDeny
+	}
+	if g.HaveAllow {
+		flags |= statdef.FlagHaveAllow
+	}
 	v := ShieldGlobalCfg{
 		Flags:       flags,
 		SynLimitPps: g.SynLimitPPS,

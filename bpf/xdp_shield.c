@@ -434,12 +434,11 @@ static __always_inline int icmp6_too_big(struct xdp_md *ctx, const struct global
 
 static __always_inline int pick_backend(const struct global_cfg *cfg, const struct vip_val *vip,
                                         void *ct, const void *ckey,
-                                        const struct flow_key *hk, int need_ct, __u32 *out)
+                                        const struct flow_key *hk, int need_ct, __u64 now, __u32 *out)
 {
     struct flow_val *fv = bpf_map_lookup_elem(ct, ckey);
     void *tbl;
     __u32 idx, *slot;
-    __u64 now = bpf_ktime_get_ns();
 
     if (fv) {
         struct backend *be = bpf_map_lookup_elem(&backend_map, &fv->backend_id);
@@ -492,6 +491,9 @@ static __always_inline int cidr_hit6(void *map, const struct addr6 *addr)
     k.addr = *addr;
     return bpf_map_lookup_elem(map, &k) != NULL;
 }
+
+#define ALLOW_HIT4 ((cfg->flags & CFG_HAVE_ALLOW) && cidr_hit(&allow_cidr, p.ip->saddr))
+#define ALLOW_HIT6 ((cfg->flags & CFG_HAVE_ALLOW) && cidr_hit6(&allow_cidr6, &src))
 
 /* v6 client packet to a v4 backend: outer ipv4 with proto 41, backend decaps on sit0 */
 static __always_inline int encap_6in4(struct xdp_md *ctx, const struct backend *be,
@@ -579,16 +581,15 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
     if (martian_src6(&src))
         return drop(STAT_DROP_MALFORMED);
 
-    now = bpf_ktime_get_ns();
-
     bv = bpf_map_lookup_elem(&dyn_blocklist6, &src);
     if (bv) {
+        now = bpf_ktime_get_ns();
         if (bv->expires_ns > now)
             return drop(STAT_DROP_BLOCKED);
         bpf_map_delete_elem(&dyn_blocklist6, &src);
     }
 
-    if (cidr_hit6(&deny_cidr6, &src))
+    if ((cfg->flags & CFG_HAVE_DENY) && cidr_hit6(&deny_cidr6, &src))
         return drop(STAT_DROP_DENYLIST);
 
     /* extension headers other than fragment aren't walked, they fall into the pass branch below */
@@ -616,13 +617,15 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
         if (p.proto == IPPROTO_UDP && (cfg->flags & CFG_DDOS_ENABLED) &&
             amp_reply(p.sport, plen) &&
             bpf_map_lookup_elem(&vip6_addrs, &dst) &&
-            !cidr_hit6(&allow_cidr6, &src))
+            !(ALLOW_HIT6))
             return drop(STAT_DROP_AMPLIFICATION);
         stat_add(STAT_PASS, 1);
         return XDP_PASS;
     }
 
-    if ((cfg->flags & CFG_DDOS_ENABLED) && !cidr_hit6(&allow_cidr6, &src)) {
+    now = bpf_ktime_get_ns();
+
+    if ((cfg->flags & CFG_DDOS_ENABLED) && !(ALLOW_HIT6)) {
         if (bad_flags)
             return drop(STAT_DROP_BAD_FLAGS);
 
@@ -669,7 +672,7 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
     hk.proto = p.proto;
 
     rc = pick_backend(cfg, vip, &conn_track6, &fk, &hk,
-                      (cfg->flags & CFG_STRICT_TCP) && p.proto == IPPROTO_TCP && !p.syn, &bid);
+                      (cfg->flags & CFG_STRICT_TCP) && p.proto == IPPROTO_TCP && !p.syn, now, &bid);
     if (rc < 0)
         return drop(rc == -2 ? STAT_DROP_NO_FLOW : STAT_DROP_NO_BACKEND);
 
@@ -735,17 +738,16 @@ int xdp_shield(struct xdp_md *ctx)
     if (rc == PARSE_BAD)
         return drop(STAT_DROP_MALFORMED);
 
-    now = bpf_ktime_get_ns();
-
     /* hot path during an attack: one hash lookup and out */
     bv = bpf_map_lookup_elem(&dyn_blocklist, &p.ip->saddr);
     if (bv) {
+        now = bpf_ktime_get_ns();
         if (bv->expires_ns > now)
             return drop(STAT_DROP_BLOCKED);
         bpf_map_delete_elem(&dyn_blocklist, &p.ip->saddr);
     }
 
-    if (cidr_hit(&deny_cidr, p.ip->saddr))
+    if ((cfg->flags & CFG_HAVE_DENY) && cidr_hit(&deny_cidr, p.ip->saddr))
         return drop(STAT_DROP_DENYLIST);
 
     /* only traffic aimed at a vip gets the rest of the pipeline */
@@ -773,13 +775,15 @@ int xdp_shield(struct xdp_md *ctx)
         if (p.proto == IPPROTO_UDP && (cfg->flags & CFG_DDOS_ENABLED) &&
             amp_reply(p.sport, bpf_ntohs(p.ip->tot_len) - p.ip->ihl * 4) &&
             bpf_map_lookup_elem(&vip_addrs, &p.ip->daddr) &&
-            !cidr_hit(&allow_cidr, p.ip->saddr))
+            !(ALLOW_HIT4))
             return drop(STAT_DROP_AMPLIFICATION);
         stat_add(STAT_PASS, 1);
         return XDP_PASS;
     }
 
-    if ((cfg->flags & CFG_DDOS_ENABLED) && !cidr_hit(&allow_cidr, p.ip->saddr)) {
+    now = bpf_ktime_get_ns();
+
+    if ((cfg->flags & CFG_DDOS_ENABLED) && !(ALLOW_HIT4)) {
         if (bad_flags)
             return drop(STAT_DROP_BAD_FLAGS);
 
@@ -816,7 +820,7 @@ int xdp_shield(struct xdp_md *ctx)
     fk.proto = p.proto;
 
     rc = pick_backend(cfg, vip, &conn_track, &fk, &fk,
-                      (cfg->flags & CFG_STRICT_TCP) && p.proto == IPPROTO_TCP && !p.syn, &bid);
+                      (cfg->flags & CFG_STRICT_TCP) && p.proto == IPPROTO_TCP && !p.syn, now, &bid);
     if (rc < 0)
         return drop(rc == -2 ? STAT_DROP_NO_FLOW : STAT_DROP_NO_BACKEND);
 
