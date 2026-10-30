@@ -55,6 +55,7 @@ git clone https://github.com/monaaoua9/xdpshield && cd xdpshield
 make build
 bin/xdpshield -check -config configs/example.yaml
 sudo XDPSHIELD_TOKEN=changeme bin/xdpshield -config configs/example.yaml
+# -log-format json -log-level debug for a log shipper or a noisy night
 
 make generate            # after touching bpf/*.c or bpf/include/*.h
 ```
