@@ -109,7 +109,8 @@ restart() {
   echo "--- conntrack new flows before restart: $before"
   [ "${before:-0}" -gt 0 ] || { echo "FAIL: run 'test' first"; return 1; }
 
-  pkill -TERM -f "xdpshield -config $CFG"; sleep 1
+  pkill -TERM -f "xdpshield -config $CFG" || { echo "FAIL: daemon is not running"; return 1; }
+  sleep 1
   # the daemon is gone but the program stays attached to eth0 and keeps forwarding from its pinned maps
   ip netns exec client curl -s --max-time 2 http://$VIP/ | grep -q backend- || { echo "FAIL: traffic stopped while the daemon was down"; return 1; }
   start
