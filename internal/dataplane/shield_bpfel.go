@@ -101,10 +101,9 @@ type ShieldLpmVal struct {
 }
 
 type ShieldRateVal struct {
-	_             structs.HostLayout
-	WindowStartNs uint64
-	Syn           uint32
-	Udp           uint32
+	_      structs.HostLayout
+	SynTat uint64
+	UdpTat uint64
 }
 
 type ShieldTrafficStat struct {

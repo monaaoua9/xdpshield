@@ -114,38 +114,44 @@ static __always_inline void block_src6(const struct global_cfg *cfg, const struc
 }
 
 /*
- * fixed 1s window per source. rollover isn't atomic: two cpus can both reset
- * the window and we undercount by a few packets. fine for flood detection.
- * returns the count after this packet.
+ * GCRA token bucket per source: one timestamp ("theoretical arrival time")
+ * per protocol, rate = limit pps, burst = one second worth. Unlike the old
+ * fixed window there is no 2x burst across a window edge. Updates aren't
+ * atomic, two cpus can both advance the same tat and we let a few extra
+ * packets through. fine for flood detection.
+ * returns 0 while the source conforms, otherwise a pps estimate above limit.
  */
-static __always_inline __u32 rate_bump(void *map, const void *src, __u64 now, int syn)
+static __always_inline __u32 rate_bump(void *map, const void *src, __u64 now, int syn, __u32 limit)
 {
     struct rate_val *r = bpf_map_lookup_elem(map, src);
+    __u64 interval = NSEC_PER_SEC / (limit ? limit : 1);
+    __u64 *tat;
 
     if (!r) {
-        struct rate_val nv = { .window_start_ns = now };
+        struct rate_val nv = {};
 
         if (syn)
-            nv.syn = 1;
+            nv.syn_tat = now + interval;
         else
-            nv.udp = 1;
+            nv.udp_tat = now + interval;
         bpf_map_update_elem(map, src, &nv, BPF_NOEXIST);
-        return 1;
+        return 0;
     }
 
-    if (now - r->window_start_ns >= NSEC_PER_SEC) {
-        r->window_start_ns = now;
-        r->syn = 0;
-        r->udp = 0;
-    }
+    tat = syn ? &r->syn_tat : &r->udp_tat;
+    if (*tat < now)
+        *tat = now;
 
-    /* cpu v1 xadd has no return value, so add and then read the total back */
-    if (syn) {
-        __sync_fetch_and_add(&r->syn, 1);
-        return r->syn;
+    /* admitting this one would put us over a second of debt: out of burst */
+    if (*tat - now + interval > NSEC_PER_SEC) {
+        __u64 queued = (*tat - now) / interval;
+
+        if (queued > 0xffffff00)
+            queued = 0xffffff00;
+        return queued > limit ? (__u32)queued + 1 : limit + 1;
     }
-    __sync_fetch_and_add(&r->udp, 1);
-    return r->udp;
+    *tat += interval;
+    return 0;
 }
 
 /*
@@ -570,13 +576,13 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
             return drop(STAT_DROP_BAD_FLAGS);
 
         if (p.proto == IPPROTO_TCP && p.syn) {
-            pps = rate_bump(&rate_state6, &src, now, 1);
+            pps = rate_bump(&rate_state6, &src, now, 1, cfg->syn_limit_pps);
             if (pps > cfg->syn_limit_pps) {
                 block_src6(cfg, &src, BLOCK_SYN_FLOOD, pps, now);
                 return drop(STAT_DROP_SYN_FLOOD);
             }
         } else if (p.proto == IPPROTO_UDP) {
-            pps = rate_bump(&rate_state6, &src, now, 0);
+            pps = rate_bump(&rate_state6, &src, now, 0, cfg->udp_limit_pps);
             if (pps > cfg->udp_limit_pps) {
                 block_src6(cfg, &src, BLOCK_UDP_FLOOD, pps, now);
                 return drop(STAT_DROP_UDP_FLOOD);
@@ -720,13 +726,13 @@ int xdp_shield(struct xdp_md *ctx)
             return drop(STAT_DROP_BAD_FLAGS);
 
         if (p.proto == IPPROTO_TCP && p.syn) {
-            pps = rate_bump(&rate_state, &p.ip->saddr, now, 1);
+            pps = rate_bump(&rate_state, &p.ip->saddr, now, 1, cfg->syn_limit_pps);
             if (pps > cfg->syn_limit_pps) {
                 block_src(cfg, p.ip->saddr, BLOCK_SYN_FLOOD, pps, now);
                 return drop(STAT_DROP_SYN_FLOOD);
             }
         } else if (p.proto == IPPROTO_UDP) {
-            pps = rate_bump(&rate_state, &p.ip->saddr, now, 0);
+            pps = rate_bump(&rate_state, &p.ip->saddr, now, 0, cfg->udp_limit_pps);
             if (pps > cfg->udp_limit_pps) {
                 block_src(cfg, p.ip->saddr, BLOCK_UDP_FLOOD, pps, now);
                 return drop(STAT_DROP_UDP_FLOOD);

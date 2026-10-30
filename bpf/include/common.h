@@ -117,9 +117,8 @@ struct flow_val {
 };
 
 struct rate_val {
-    __u64 window_start_ns;
-    __u32 syn;
-    __u32 udp;
+    __u64 syn_tat;      /* gcra theoretical arrival times, ns */
+    __u64 udp_tat;
 };
 
 struct block_val {
