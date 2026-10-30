@@ -12,6 +12,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/monaaoua9/xdpshield/internal/controller"
 	"github.com/monaaoua9/xdpshield/internal/maglev"
+	"github.com/monaaoua9/xdpshield/internal/statdef"
 )
 
 var _ controller.Dataplane = (*Plane)(nil)
@@ -42,7 +43,10 @@ func port16(p uint16) uint16 {
 func (p *Plane) SetGlobal(g controller.Global) error {
 	var flags uint32
 	if g.DDoS {
-		flags |= 1
+		flags |= statdef.FlagDDoSEnabled
+	}
+	if g.StrictTCP {
+		flags |= statdef.FlagStrictTCP
 	}
 	v := ShieldGlobalCfg{
 		Flags:       flags,

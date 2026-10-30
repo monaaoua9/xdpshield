@@ -434,7 +434,7 @@ static __always_inline int icmp6_too_big(struct xdp_md *ctx, const struct global
 
 static __always_inline int pick_backend(const struct global_cfg *cfg, const struct vip_val *vip,
                                         void *ct, const void *ckey,
-                                        const struct flow_key *hk, __u32 *out)
+                                        const struct flow_key *hk, int need_ct, __u32 *out)
 {
     struct flow_val *fv = bpf_map_lookup_elem(ct, ckey);
     void *tbl;
@@ -452,6 +452,10 @@ static __always_inline int pick_backend(const struct global_cfg *cfg, const stru
             return 0;
         }
     }
+
+    /* tcp that isn't a syn and isn't tracked: nothing legitimate we know of, see CFG_STRICT_TCP */
+    if (need_ct)
+        return -2;
 
     tbl = bpf_map_lookup_elem(&lb_tables, &vip->id);
     if (!tbl || vip->table_len == 0)
@@ -664,8 +668,10 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
     hk.dport = p.dport;
     hk.proto = p.proto;
 
-    if (pick_backend(cfg, vip, &conn_track6, &fk, &hk, &bid) < 0)
-        return drop(STAT_DROP_NO_BACKEND);
+    rc = pick_backend(cfg, vip, &conn_track6, &fk, &hk,
+                      (cfg->flags & CFG_STRICT_TCP) && p.proto == IPPROTO_TCP && !p.syn, &bid);
+    if (rc < 0)
+        return drop(rc == -2 ? STAT_DROP_NO_FLOW : STAT_DROP_NO_BACKEND);
 
     be = bpf_map_lookup_elem(&backend_map, &bid);
     if (!be || !be->active)
@@ -809,8 +815,10 @@ int xdp_shield(struct xdp_md *ctx)
     fk.dport = p.dport;
     fk.proto = p.proto;
 
-    if (pick_backend(cfg, vip, &conn_track, &fk, &fk, &bid) < 0)
-        return drop(STAT_DROP_NO_BACKEND);
+    rc = pick_backend(cfg, vip, &conn_track, &fk, &fk,
+                      (cfg->flags & CFG_STRICT_TCP) && p.proto == IPPROTO_TCP && !p.syn, &bid);
+    if (rc < 0)
+        return drop(rc == -2 ? STAT_DROP_NO_FLOW : STAT_DROP_NO_BACKEND);
 
     be = bpf_map_lookup_elem(&backend_map, &bid);
     if (!be || !be->active)

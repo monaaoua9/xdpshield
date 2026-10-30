@@ -40,6 +40,7 @@ var Names = []string{
 	"icmp_frag_needed",
 	"icmp6_too_big",
 	"drop_amplification",
+	"drop_no_flow",
 }
 
 // block reasons as written by the datapath
@@ -66,4 +67,7 @@ const (
 	AlgoWRR    = 1
 )
 
-const FlagDDoSEnabled = 1
+const (
+	FlagDDoSEnabled = 1
+	FlagStrictTCP   = 2
+)

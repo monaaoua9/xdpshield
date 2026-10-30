@@ -2,6 +2,7 @@
 # One-arm lab on a single linux box: client, lb and two backends in netns, joined by a bridge.
 #   sudo test/lab.sh up      build the lab and start xdpshield in the background
 #   sudo test/lab.sh test    curl the vip over v4 and v6 from the client, then fire a syn flood
+#   sudo test/lab.sh reload  drain be1 through a SIGHUP reload, check new flows only reach be2, undo it
 #   sudo test/lab.sh restart restart the daemon (pin_path) and check counters and traffic survive
 #   sudo test/lab.sh down
 set -euo pipefail
@@ -100,6 +101,32 @@ test_() {
   ip netns exec lb curl -s localhost:9100/metrics | grep -E 'xdpshield_(dropped|forwarded|sources)' | grep -v ' 0$'
 }
 
+# 30 fresh connections, prints how many each backend answered
+spread() {
+  base=$1
+  for i in $(seq 30); do ip netns exec client curl -s --max-time 2 --local-port $((base+i)) http://$VIP/ || true; done | sort | uniq -c
+}
+
+reload_() {
+  ip netns exec lb curl -s -X DELETE -H "Authorization: Bearer lab" localhost:9100/api/v1/blocklist/$SUBNET.1 >/dev/null
+  cp $CFG $CFG.orig
+  sed -i '/name: be1,/ s/}$/, drain: true}/' $CFG
+  pkill -HUP -f "xdpshield -config $CFG" || { echo "FAIL: daemon is not running"; return 1; }
+  sleep 1
+  got=$(spread 42000)
+  echo "--- be1 draining"; echo "$got"
+  echo "$got" | grep -q backend-be1 && { echo "FAIL: drained backend still got new flows"; mv $CFG.orig $CFG; return 1; }
+  [ "$(echo "$got" | awk '{s+=$1} END {print s}')" = 30 ] || { echo "FAIL: lost requests while draining"; mv $CFG.orig $CFG; return 1; }
+
+  mv $CFG.orig $CFG
+  pkill -HUP -f "xdpshield -config $CFG"; sleep 1
+  got=$(spread 43000)
+  echo "--- be1 back"; echo "$got"
+  echo "$got" | grep -q backend-be1 || { echo "FAIL: be1 never came back"; return 1; }
+  grep -c "config reloaded" /tmp/xdpshield-lab.log | sed 's/^/reloads logged: /'
+  echo "reload ok"
+}
+
 counter() { ip netns exec lb curl -s localhost:9100/metrics | awk -v m="$1" '$1 == m {print int($2)}'; }
 
 restart() {
@@ -109,7 +136,8 @@ restart() {
   echo "--- conntrack new flows before restart: $before"
   [ "${before:-0}" -gt 0 ] || { echo "FAIL: run 'test' first"; return 1; }
 
-  pkill -TERM -f "xdpshield -config $CFG"; sleep 1
+  pkill -TERM -f "xdpshield -config $CFG" || { echo "FAIL: daemon is not running"; return 1; }
+  sleep 1
   # the daemon is gone but the program stays attached to eth0 and keeps forwarding from its pinned maps
   ip netns exec client curl -s --max-time 2 http://$VIP/ | grep -q backend- || { echo "FAIL: traffic stopped while the daemon was down"; return 1; }
   start
@@ -136,6 +164,7 @@ case "${1:-}" in
   up) up ;;
   test) test_ ;;
   restart) restart ;;
+  reload) reload_ ;;
   down) down ;;
-  *) echo "usage: $0 up|test|restart|down"; exit 1 ;;
+  *) echo "usage: $0 up|test|reload|restart|down"; exit 1 ;;
 esac
