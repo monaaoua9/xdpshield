@@ -16,6 +16,7 @@ ddos:
     - 10.0.0.0/8          # monitoring, office, upstream health probes
   deny:
     - 192.0.2.0/24
+    - 2001:db8:bad::/48   # v6 prefixes go in the same lists
 
 health:
   enabled: true
@@ -51,3 +52,12 @@ vips:
     backends:
       - {name: dns-1, weight: 3}
       - {name: dns-2, weight: 1}
+
+  # v6 vips tunnel to the same ipv4 backends over 6in4 (backend-setup.sh <vip> <vip6>)
+  - name: web-https-v6
+    address: 2001:db8:100::10
+    port: 443
+    algorithm: maglev
+    backends:
+      - {name: web-1, weight: 100}
+      - {name: web-2, weight: 100}
