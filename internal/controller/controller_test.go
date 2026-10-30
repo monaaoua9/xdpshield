@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/netip"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -237,5 +238,58 @@ func TestIDsNotReusedImmediately(t *testing.T) {
 	}
 	if _, err := p.get("f"); err == nil {
 		t.Fatal("expected exhaustion")
+	}
+}
+
+func TestRestoreKeepsIDsAndCleansStale(t *testing.T) {
+	first := newFake()
+	c1 := New(first)
+	if err := c1.Apply(mustCfg(t, base)); err != nil {
+		t.Fatal(err)
+	}
+	idC, _ := c1.beIDs.lookup("c")
+	st := c1.State()
+
+	// round trip through the file like main does
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := SaveState(path, st); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// restarted process, same kernel state: backend order flipped and "a" is gone
+	second := newFake()
+	second.backends = map[uint32]bool{}
+	for id, up := range first.backends {
+		second.backends[id] = up
+	}
+	c2 := New(second)
+	c2.Restore(loaded)
+
+	next := strings.Replace(base, `  - {name: a, address: 10.0.1.1, mac: "02:00:00:00:00:01"}
+`, "", 1)
+	next = strings.Replace(next, "backends: [{name: a}, {name: b}]", "backends: [{name: b}, {name: c}]", 1)
+	if err := c2.Apply(mustCfg(t, next)); err != nil {
+		t.Fatal(err)
+	}
+	if id, _ := c2.beIDs.lookup("c"); id != idC {
+		t.Fatalf("c moved from %d to %d", idC, id)
+	}
+	idA, _ := c1.beIDs.lookup("a")
+	if _, still := second.backends[idA]; still {
+		t.Fatal("stale backend a was not removed")
+	}
+	if len(second.vips) != 1 {
+		t.Fatalf("vips %v", second.vips)
+	}
+}
+
+func TestLoadStateMissingFileIsEmpty(t *testing.T) {
+	s, err := LoadState(filepath.Join(t.TempDir(), "nope.json"))
+	if err != nil || len(s.Backends) != 0 {
+		t.Fatalf("%+v %v", s, err)
 	}
 }
