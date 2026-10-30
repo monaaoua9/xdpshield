@@ -28,6 +28,7 @@
 
 enum cfg_flags {
     CFG_DDOS_ENABLED = 1 << 0,
+    CFG_STRICT_TCP   = 1 << 1,  /* drop non-syn tcp for vips with no tracked flow */
 };
 
 enum lb_algo {
@@ -66,6 +67,7 @@ enum stat_id {
     STAT_ICMP_FRAG_NEEDED,
     STAT_ICMP6_TOO_BIG,
     STAT_DROP_AMPLIFICATION,
+    STAT_DROP_NO_FLOW,
     STAT_MAX,
 };
 

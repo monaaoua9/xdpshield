@@ -23,6 +23,7 @@ const (
 
 type Global struct {
 	DDoS        bool
+	StrictTCP   bool
 	SynLimitPPS uint32
 	UDPLimitPPS uint32
 	BlockTTL    time.Duration
@@ -120,6 +121,7 @@ func (c *Controller) reconcile() error {
 
 	g := Global{
 		DDoS:        cfg.DDoS.Enabled,
+		StrictTCP:   cfg.DDoS.Enabled && cfg.DDoS.DropOrphanTCP,
 		SynLimitPPS: cfg.DDoS.SynLimitPPS,
 		UDPLimitPPS: cfg.DDoS.UDPLimitPPS,
 		BlockTTL:    cfg.DDoS.BlockTTL,

@@ -44,7 +44,7 @@ func TestCollect(t *testing.T) {
 	reg.MustRegister(NewCollector(fakeSrc{}, fakeTopo{}))
 
 	got, err := testutil.GatherAndCount(reg, "xdpshield_dropped_packets_total")
-	if err != nil || got != 11 {
+	if err != nil || got != 12 {
 		t.Fatalf("drop series: %d, %v", got, err)
 	}
 

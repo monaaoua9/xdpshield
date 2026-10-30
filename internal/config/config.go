@@ -43,12 +43,15 @@ type Config struct {
 }
 
 type DDoS struct {
-	Enabled     bool           `yaml:"enabled"`
-	SynLimitPPS uint32         `yaml:"syn_limit_pps"`
-	UDPLimitPPS uint32         `yaml:"udp_limit_pps"`
-	BlockTTL    time.Duration  `yaml:"block_ttl"`
-	Allow       []netip.Prefix `yaml:"allow"`
-	Deny        []netip.Prefix `yaml:"deny"`
+	Enabled     bool          `yaml:"enabled"`
+	SynLimitPPS uint32        `yaml:"syn_limit_pps"`
+	UDPLimitPPS uint32        `yaml:"udp_limit_pps"`
+	BlockTTL    time.Duration `yaml:"block_ttl"`
+	// drop tcp that isn't a syn and has no tracked flow. kills ack/rst floods at the vip, but also
+	// flows that were never seen by this node (failover without state, restart without pin_path)
+	DropOrphanTCP bool           `yaml:"drop_orphan_tcp"`
+	Allow         []netip.Prefix `yaml:"allow"`
+	Deny          []netip.Prefix `yaml:"deny"`
 	// files of prefixes (country zones, drop lists...) merged into allow/deny on load
 	AllowLists []string `yaml:"allow_lists"`
 	DenyLists  []string `yaml:"deny_lists"`
