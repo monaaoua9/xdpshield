@@ -100,6 +100,12 @@ config.yaml ──► config.Load (strict parse, validation)
 - If every backend of a VIP fails health checks the table is built from all of them. Dropping everything is worse than trying.
 - A table identical to the one already installed is not rewritten.
 
+## Prefix list files
+
+`ddos.deny_lists` / `allow_lists` name files with one prefix or bare address per line (`#` and `;` start comments). They are read on every config load, relative to the config file, merged with the inline lists, deduplicated and pushed into the same LPM tries, so a country zone file or a Spamhaus DROP dump is enough for coarse geo or reputation blocking. Each trie holds 16384 prefixes per family and the loader rejects bigger sets. The files are not watched: after refreshing them send `SIGHUP`, or touch the config.
+
+There is deliberately no MaxMind/ASN reader in the daemon; turn the database into prefix files with whatever tool you trust and drop the result in.
+
 ## Draining
 
 `drain: true` on a backend removes it from every Maglev/WRR table but leaves it `active` in `backend_map`, so conntrack hits keep going to it. Flows end on their own or age out of the LRU. If every backend of a VIP is drained or down the VIP falls back to using all of them rather than blackholing. After removing the backend from the config, its remaining flows rehash to somewhere else.

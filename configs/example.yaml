@@ -20,6 +20,10 @@ ddos:
   deny:
     - 192.0.2.0/24
     - 2001:db8:bad::/48   # v6 prefixes go in the same lists
+  # files with one prefix per line (country zones, spamhaus drop...), merged into
+  # allow/deny on every load; reload with SIGHUP after refreshing them
+  # deny_lists: [lists/cn.zone, lists/drop.txt]
+  # allow_lists: [lists/partners.txt]
 
 health:
   enabled: true
