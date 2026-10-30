@@ -199,10 +199,15 @@ func (c *Controller) syncVIP(v config.VIP) error {
 		return err
 	}
 
+	draining := map[string]bool{}
+	for _, b := range c.cfg.Backends {
+		draining[b.Name] = b.Drain
+	}
+
 	members := func(onlyHealthy bool) []maglev.Backend {
 		var out []maglev.Backend
 		for _, m := range v.Backends {
-			if onlyHealthy && !c.healthy(m.Name) {
+			if onlyHealthy && (!c.healthy(m.Name) || draining[m.Name]) {
 				continue
 			}
 			bid, _ := c.beIDs.lookup(m.Name)
@@ -213,7 +218,7 @@ func (c *Controller) syncVIP(v config.VIP) error {
 
 	bs := members(true)
 	if len(bs) == 0 {
-		// everything is down: better to try them all than blackhole the vip
+		// everything is down or draining: better to try them all than blackhole the vip
 		bs = members(false)
 	}
 

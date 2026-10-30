@@ -69,6 +69,8 @@ type Backend struct {
 	// tcp (default) or http; http wants a 2xx/3xx from health_path (default /)
 	HealthCheck string `yaml:"health_check"`
 	HealthPath  string `yaml:"health_path"`
+	// no new flows, tracked ones keep going until they end or age out
+	Drain bool `yaml:"drain"`
 }
 
 type VIP struct {

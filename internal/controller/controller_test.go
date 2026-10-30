@@ -118,6 +118,36 @@ func TestAmplificationPushed(t *testing.T) {
 	}
 }
 
+func TestDrainKeepsBackendActiveButOutOfTables(t *testing.T) {
+	fp := newFake()
+	c := New(fp)
+	c.Apply(mustCfg(t, base))
+	idA, _ := c.beIDs.lookup("a")
+	idB, _ := c.beIDs.lookup("b")
+
+	drained := strings.Replace(base, "address: 10.0.1.2,", "address: 10.0.1.2, drain: true,", 1)
+	if err := c.Apply(mustCfg(t, drained)); err != nil {
+		t.Fatal(err)
+	}
+	if !fp.backends[idB] {
+		t.Fatal("drained backend must stay active so tracked flows keep working")
+	}
+	for _, id := range fp.tables[0] {
+		if id != idA {
+			t.Fatalf("new flows still routed to %d", id)
+		}
+	}
+
+	// draining the last one doesn't blackhole the vip
+	both := strings.Replace(drained, "address: 10.0.1.1,", "address: 10.0.1.1, drain: true,", 1)
+	if err := c.Apply(mustCfg(t, both)); err != nil {
+		t.Fatal(err)
+	}
+	if len(fp.tables[0]) == 0 {
+		t.Fatal("empty table")
+	}
+}
+
 func TestApplyIsIdempotent(t *testing.T) {
 	fp := newFake()
 	c := New(fp)
