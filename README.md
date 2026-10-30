@@ -80,7 +80,8 @@ bin/xdpshieldctl top                      # live pps, drops by reason, backend h
 ```sh
 make test-unit            # maglev, config, controller (fake dataplane), health, metrics, admin
 make test-integration     # root, linux: loads the real program and runs crafted packets through it
-test/lab.sh up && test/lab.sh test    # end to end with network namespaces
+test/lab.sh up && test/lab.sh test    # end to end with network namespaces: v4 and v6 vips, syn flood
+test/lab.sh restart                    # kill the daemon, traffic keeps flowing, restart picks the pins up
 ```
 
 The integration suite covers encapsulation (headers, checksum, MACs), flow stickiness, Maglev spread, WRR ratio, SYN/UDP flood blocking and unblocking, ring buffer events, allow/deny lists, bad flags, malformed frames, fragments, MTU drops and the ICMP frag-needed reply.
