@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -65,6 +66,9 @@ type Backend struct {
 	Address    netip.Addr `yaml:"address"`
 	MAC        string     `yaml:"mac"` // next hop mac on the lb's interface
 	HealthPort uint16     `yaml:"health_port"`
+	// tcp (default) or http; http wants a 2xx/3xx from health_path (default /)
+	HealthCheck string `yaml:"health_check"`
+	HealthPath  string `yaml:"health_path"`
 }
 
 type VIP struct {
@@ -139,6 +143,15 @@ func (c *Config) defaults() {
 	if h.Rise == 0 {
 		h.Rise = 2
 	}
+	for i := range c.Backends {
+		b := &c.Backends[i]
+		if b.HealthCheck == "" {
+			b.HealthCheck = "tcp"
+		}
+		if b.HealthCheck == "http" && b.HealthPath == "" {
+			b.HealthPath = "/"
+		}
+	}
 	for i := range c.VIPs {
 		v := &c.VIPs[i]
 		if v.Proto == "" {
@@ -210,6 +223,12 @@ func (c *Config) Validate() error {
 		}
 		if other, dup := addrs[b.Address]; dup {
 			return fmt.Errorf("backend %s and %s share address %s", b.Name, other, b.Address)
+		}
+		if b.HealthCheck != "tcp" && b.HealthCheck != "http" {
+			return fmt.Errorf("backend %s: health_check %q, want tcp or http", b.Name, b.HealthCheck)
+		}
+		if b.HealthCheck == "http" && !strings.HasPrefix(b.HealthPath, "/") {
+			return fmt.Errorf("backend %s: health_path must start with /", b.Name)
 		}
 		if _, err := net.ParseMAC(b.MAC); err != nil {
 			return fmt.Errorf("backend %s: bad mac: %w", b.Name, err)

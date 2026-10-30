@@ -87,6 +87,24 @@ func TestAmplificationValidation(t *testing.T) {
 	}
 }
 
+func TestHealthCheckKinds(t *testing.T) {
+	c, err := Parse([]byte(strings.Replace(good, `address: 10.0.1.1,`, `address: 10.0.1.1, health_check: http,`, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := c.Backends[0]; b.HealthCheck != "http" || b.HealthPath != "/" {
+		t.Fatalf("got %+v", b)
+	}
+	if c.Backends[1].HealthCheck != "tcp" {
+		t.Fatalf("default is %q", c.Backends[1].HealthCheck)
+	}
+	for _, bad := range []string{`health_check: icmp,`, `health_check: http, health_path: ready,`} {
+		if _, err := Parse([]byte(strings.Replace(good, `address: 10.0.1.1,`, `address: 10.0.1.1, `+bad, 1))); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
 func TestExampleConfigIsValid(t *testing.T) {
 	if _, err := Load("../../configs/example.yaml"); err != nil {
 		t.Fatal(err)

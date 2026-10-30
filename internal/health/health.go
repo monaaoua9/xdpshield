@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
-	"net/netip"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -45,7 +45,7 @@ func (m *Manager) Update(cfg *config.Config) {
 		m.wg.Add(1)
 		go func() {
 			defer m.wg.Done()
-			m.probe(ctx, b.Name, b.Address, port, cfg.Health)
+			m.probe(ctx, b, port, cfg.Health)
 		}()
 	}
 }
@@ -61,8 +61,13 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
-func (m *Manager) probe(ctx context.Context, name string, ip netip.Addr, port uint16, h config.Health) {
-	addr := net.JoinHostPort(ip.String(), strconv.Itoa(int(port)))
+func (m *Manager) probe(ctx context.Context, b config.Backend, port uint16, h config.Health) {
+	name := b.Name
+	addr := net.JoinHostPort(b.Address.String(), strconv.Itoa(int(port)))
+	chk := func() bool { return check(ctx, addr, h.Timeout) }
+	if b.HealthCheck == "http" {
+		chk = httpCheck(ctx, addr, b.HealthPath, h.Timeout)
+	}
 	up := true
 	fails, oks := 0, 0
 
@@ -75,8 +80,7 @@ func (m *Manager) probe(ctx context.Context, name string, ip netip.Addr, port ui
 		case <-t.C:
 		}
 
-		ok := check(ctx, addr, h.Timeout)
-		if ok {
+		if chk() {
 			oks++
 			fails = 0
 		} else {
@@ -105,4 +109,25 @@ func check(ctx context.Context, addr string, timeout time.Duration) bool {
 	}
 	c.Close()
 	return true
+}
+
+func httpCheck(ctx context.Context, addr, path string, timeout time.Duration) func() bool {
+	cl := &http.Client{
+		Timeout: timeout,
+		// a redirect to a login page shouldn't count as healthy or unhealthy by itself
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	url := "http://" + addr + path
+	return func() bool {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return false
+		}
+		resp, err := cl.Do(req)
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode >= 200 && resp.StatusCode < 400
+	}
 }
