@@ -1,6 +1,7 @@
 interface: eth0
 xdp_mode: auto            # auto = driver mode if the nic supports it, else generic
 listen: 127.0.0.1:9100    # /metrics, /healthz and the admin api
+pin_path: /sys/fs/bpf/xdpshield   # maps and the xdp link outlive the process; `xdpshield -unpin` removes them
 admin_token_env: XDPSHIELD_TOKEN   # unset or empty env var = admin writes disabled
 
 encap_src: 10.0.0.1       # this lb's address, used as outer src of the ipip tunnel

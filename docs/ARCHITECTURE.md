@@ -100,6 +100,14 @@ config.yaml ──► config.Load (strict parse, validation)
 - If every backend of a VIP fails health checks the table is built from all of them. Dropping everything is worse than trying.
 - A table identical to the one already installed is not rewritten.
 
+## Restarts (pin_path)
+
+With `pin_path: /sys/fs/bpf/xdpshield` every map is pinned there by name and the XDP link is pinned as `xdp_link`. On the next start the loader reuses the pinned maps (conntrack, rate state, blocklist, counters, tables) instead of creating new ones and calls `Update` on the pinned link, which replaces the program atomically (linux 5.9+). When the process exits the datapath keeps forwarding with the last tables.
+
+Ids are the catch: conntrack entries hold backend ids, and ids are handed out by the controller. It writes `state.json` next to the pins after every successful config apply and reads it back before the first apply, so names keep their ids and entries the new config dropped are removed as usual. Health starts out "all up" again.
+
+If a new build changes a map layout the loader refuses the old pins and says to run `xdpshield -unpin` first (that drops conntrack). Changing `interface`, `xdp_mode` or `pin_path` needs `-unpin` too, the pinned link stays on the old interface. An unpinned run behaves as before: exit detaches.
+
 ## Prefix list files
 
 `ddos.deny_lists` / `allow_lists` name files with one prefix or bare address per line (`#` and `;` start comments). They are read on every config load, relative to the config file, merged with the inline lists, deduplicated and pushed into the same LPM tries, so a country zone file or a Spamhaus DROP dump is enough for coarse geo or reputation blocking. Each trie holds 16384 prefixes per family and the loader rejects bigger sets. The files are not watched: after refreshing them send `SIGHUP`, or touch the config.
