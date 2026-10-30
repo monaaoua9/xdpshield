@@ -4,7 +4,8 @@ listen: 127.0.0.1:9100    # /metrics, /healthz and the admin api
 pin_path: /sys/fs/bpf/xdpshield   # maps and the xdp link outlive the process; `xdpshield -unpin` removes them
 admin_token_env: XDPSHIELD_TOKEN   # unset or empty env var = admin writes disabled
 
-encap_src: 10.0.0.1       # this lb's address, used as outer src of the ipip tunnel
+encap_src: 10.0.0.1       # this lb's address, used as outer src of the ipip tunnel (ipv4 backends)
+# encap_src6: 2001:db8:ee::1   # same for ipv6 backends, required as soon as one backend has a v6 address
 mtu: 1500                 # packets that would exceed this after +20 bytes of ipip are dropped
 hash_seed: 24301          # must be identical on every lb node
 
@@ -39,6 +40,7 @@ backends:
   - {name: web-2, address: 10.0.1.12, mac: "02:42:0a:00:01:0c"}
   - {name: web-3, address: 10.0.1.13, mac: "02:42:0a:00:01:0d", health_port: 8080, health_check: http, health_path: /ready}
   - {name: dns-1, address: 10.0.1.21, mac: "02:42:0a:00:01:15"}
+  # - {name: web-6, address: "2001:db8:b::7", mac: "02:42:0a:00:01:20"}   # v6 backend, tunnel adds 40 bytes
   - {name: dns-2, address: 10.0.1.22, mac: "02:42:0a:00:01:16"}   # add drain: true to retire a backend without cutting its flows
 
 vips:

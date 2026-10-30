@@ -130,7 +130,7 @@ There is deliberately no MaxMind/ASN reader in the daemon; turn the database int
 
 ## Limits and known gaps
 
-- IPv6 VIPs work, but backends must be IPv4: a v6 client packet is wrapped in an IPv4 header with protocol 41 (6in4) and unwrapped on the backend's `sit0`. There is no ip6ip6 path.
+- Backends can be IPv4 or IPv6, independent of the VIP family. The outer header follows the backend: IPv4 backends get IPIP (inner v4) or 6in4 (protocol 41, inner v6, decap on `sit0`), IPv6 backends get IPIP6 (next header 4) or IP6IP6 (next header 41), decapsulated on `ip6tnl0`. `encap_src` is needed with any v4 backend, `encap_src6` with any v6 one. The tunnel overhead used for the MTU check is 40 bytes as soon as one backend is v6 (it is checked before a backend is picked), so a pure-v4 setup keeps the 20 byte limit.
 - IPv6 extension headers are not walked. Only the fragment header is recognised (dropped when aimed at a VIP); anything else that isn't TCP or UDP right after the fixed header is passed to the host, including hop-by-hop and routing headers on VIP traffic.
 - No SYN cookies; SYN floods are handled by per-source rate limits, which does nothing against a spoofed-source flood spread over millions of addresses. Pair with upstream scrubbing for volumetric attacks.
 - Rate limits are a GCRA token bucket per source (rate = limit, burst = one second of it), kept as one timestamp per protocol. Updates are not locked, so two cpus racing on the same source can admit a few extra packets.

@@ -10,7 +10,7 @@ client ─► NIC ─► [ XDP: validate ─► blocklist ─► rate limit ─�
                         └─ stats, ring buffer ─► controller ─► /metrics, admin api, logs
 ```
 
-- **Dual stack**: IPv4 and IPv6 VIPs, blocklists and CIDR lists. IPv6 clients are carried to the (IPv4) backends in 6in4 and get ICMPv6 packet too big when they overshoot the MTU.
+- **Dual stack**: IPv4 and IPv6 VIPs, blocklists, CIDR lists and backends, any mix. The tunnel is IPIP, 6in4, IPIP6 or IP6IP6 depending on the pair; oversized packets get ICMP frag-needed or ICMPv6 packet too big.
 - **Load balancing in the kernel**: Maglev consistent hashing or smooth weighted round robin per VIP, LRU connection tracking so established flows survive backend changes, DSR so responses bypass the balancer.
 - **DDoS**: malformed and martian packets, invalid TCP flag combinations, fragments to VIPs, reflected UDP answers (DNS, NTP, memcached...) aimed at a VIP address, per-source SYN and UDP token-bucket rate limits with automatic TTL blocklisting, permanent allow/deny CIDRs (inline or from prefix list files such as country zones). The packet that trips a limit creates the block; the controller is informed asynchronously.
 - **Restarts without losing state**: with `pin_path` set, maps (conntrack, blocklists, counters) and the XDP link are pinned on bpffs. A restart reuses them and swaps the program inside the live link, so flows survive and there is no gap. `xdpshield -unpin` detaches for good.
@@ -106,7 +106,7 @@ These are ceilings for the program on a slow laptop core, not NIC throughput: a 
 
 Unit tests pass. The program loads under the verifier of a 6.6 kernel (WSL2, clang 21) and the `BPF_PROG_TEST_RUN` integration tests (v4, v6, amplification, drain, rate limits) pass. The first load was rejected for an unbounded `tot_len` after the byte swap; that is fixed in `parsing.h`. `test/lab.sh` also ran on that kernel (generic XDP, netns): 20 requests to the VIP were answered through the IPIP path and the SYN flood got the client blocked. The lab backends share one /tmp, so it can't show the split between them; the integration tests cover that. Other kernels and NIC drivers (native XDP) have not been tried; CI runs the integration suite on every push.
 
-Known gaps are listed at the end of the architecture doc: v6 backends (v6 clients are tunnelled to v4 backends over 6in4), no SYN cookies.
+Known gaps are listed at the end of the architecture doc: no SYN cookies, no IPv6 extension header walking.
 
 ## License
 
