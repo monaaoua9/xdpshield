@@ -168,8 +168,8 @@ func (c *Config) Validate() error {
 	}
 
 	for _, p := range append(append([]netip.Prefix{}, c.DDoS.Allow...), c.DDoS.Deny...) {
-		if !p.Addr().Is4() {
-			return fmt.Errorf("cidr %s: only ipv4 is supported", p)
+		if !p.IsValid() || p.Addr().Is4In6() {
+			return fmt.Errorf("cidr %s: use a plain ipv4 or ipv6 prefix", p)
 		}
 	}
 
@@ -183,6 +183,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("duplicate backend %q", b.Name)
 		}
 		if !b.Address.Is4() {
+			// v6 clients reach v4 backends over 6in4, there is no ip6ip6 path yet
 			return fmt.Errorf("backend %s: address must be ipv4", b.Name)
 		}
 		if other, dup := addrs[b.Address]; dup {
@@ -207,8 +208,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("vip name %q missing or duplicated", v.Name)
 		}
 		names[v.Name] = true
-		if !v.Address.Is4() {
-			return fmt.Errorf("vip %s: address must be ipv4", v.Name)
+		if !v.Address.IsValid() || v.Address.Is4In6() {
+			return fmt.Errorf("vip %s: address must be plain ipv4 or ipv6", v.Name)
 		}
 		if v.Port == 0 {
 			return fmt.Errorf("vip %s: port is required", v.Name)

@@ -50,7 +50,10 @@ func TestBlockFlow(t *testing.T) {
 	if w := do(h, "POST", "/api/v1/blocklist", `{"ip":"1.2.3.4"}`, "Bearer wrong"); w.Code != 401 {
 		t.Fatalf("wrong token: %d", w.Code)
 	}
-	if w := do(h, "POST", "/api/v1/blocklist", `{"ip":"::1"}`, "Bearer s3cret"); w.Code != 400 {
+	if w := do(h, "POST", "/api/v1/blocklist", `{"ip":"::ffff:1.2.3.4"}`, "Bearer s3cret"); w.Code != 400 {
+		t.Fatalf("mapped: %d", w.Code)
+	}
+	if w := do(h, "POST", "/api/v1/blocklist", `{"ip":"2001:db8::7"}`, "Bearer s3cret"); w.Code != 201 {
 		t.Fatalf("ipv6: %d", w.Code)
 	}
 	if w := do(h, "POST", "/api/v1/blocklist", `{"ip":"1.2.3.4","ttl":"999h"}`, "Bearer s3cret"); w.Code != 400 {
@@ -65,6 +68,9 @@ func TestBlockFlow(t *testing.T) {
 	}
 	if w := do(h, "DELETE", "/api/v1/blocklist/1.2.3.4", "", "Bearer s3cret"); w.Code != 204 {
 		t.Fatalf("unblock: %d", w.Code)
+	}
+	if w := do(h, "DELETE", "/api/v1/blocklist/2001:db8::7", "", "Bearer s3cret"); w.Code != 204 {
+		t.Fatalf("unblock v6: %d", w.Code)
 	}
 	if len(ctl.blocked) != 0 {
 		t.Fatal("still blocked")

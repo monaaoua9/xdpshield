@@ -44,7 +44,8 @@ func TestParseRejects(t *testing.T) {
 		"unknown field":   good + "\nbogus: 1\n",
 		"unknown backend": strings.Replace(good, "{name: b}", "{name: nope}", 1),
 		"bad mac":         strings.Replace(good, "02:00:00:00:00:02", "zz", 1),
-		"ipv6 vip":        strings.Replace(good, "203.0.113.10", "2001:db8::1", 1),
+		"ipv6 backend":    strings.Replace(good, "10.0.1.2", "2001:db8::2", 1),
+		"mapped vip":      strings.Replace(good, "203.0.113.10", "::ffff:203.0.113.10", 1),
 		"dup backend ip":  strings.Replace(good, "10.0.1.2", "10.0.1.1", 1),
 		"no iface":        strings.Replace(good, "interface: eth0", "", 1),
 		"bad algo":        strings.Replace(good, "port: 443", "port: 443\n    algorithm: random", 1),
@@ -53,6 +54,18 @@ func TestParseRejects(t *testing.T) {
 		if _, err := Parse([]byte(raw)); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+func TestIPv6VIPAndCIDRs(t *testing.T) {
+	raw := strings.Replace(good, "203.0.113.10", "2001:db8::1", 1)
+	raw = strings.Replace(raw, "ddos:\n", "ddos:\n  deny: [2001:db8:bad::/48]\n", 1)
+	c, err := Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.VIPs[0].Address.Is6() {
+		t.Fatalf("vip addr %s", c.VIPs[0].Address)
 	}
 }
 

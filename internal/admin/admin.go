@@ -98,8 +98,8 @@ func (s *Server) block(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip, err := netip.ParseAddr(req.IP)
-	if err != nil || !ip.Is4() {
-		fail(w, 400, "INVALID_IP", "ipv4 address required")
+	if err != nil || ip.Is4In6() || ip.Zone() != "" {
+		fail(w, 400, "INVALID_IP", "ipv4 or ipv6 address required")
 		return
 	}
 	ttl := 10 * time.Minute
@@ -119,8 +119,8 @@ func (s *Server) block(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) unblock(w http.ResponseWriter, r *http.Request) {
 	ip, err := netip.ParseAddr(r.PathValue("ip"))
-	if err != nil || !ip.Is4() {
-		fail(w, 400, "INVALID_IP", "ipv4 address required")
+	if err != nil || ip.Is4In6() || ip.Zone() != "" {
+		fail(w, 400, "INVALID_IP", "ipv4 or ipv6 address required")
 		return
 	}
 	if err := s.ctl.Unblock(ip); err != nil {
