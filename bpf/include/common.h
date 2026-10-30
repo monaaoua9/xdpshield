@@ -63,6 +63,7 @@ enum stat_id {
     STAT_DROP_MTU,
     STAT_DROP_ENCAP,
     STAT_ICMP_FRAG_NEEDED,
+    STAT_ICMP6_TOO_BIG,
     STAT_MAX,
 };
 

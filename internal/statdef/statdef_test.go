@@ -17,7 +17,7 @@ func TestMatchesHeader(t *testing.T) {
 	end := strings.Index(src[start:], "};")
 	body := src[start : start+end]
 
-	re := regexp.MustCompile(`(?m)^\s*STAT_([A-Z_]+)`)
+	re := regexp.MustCompile(`(?m)^\s*STAT_([A-Z0-9_]+)`)
 	var got []string
 	for _, m := range re.FindAllStringSubmatch(body, -1) {
 		if m[1] == "MAX" {

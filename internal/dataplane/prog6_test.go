@@ -298,16 +298,54 @@ func TestV6BlockEventCarriesAddress(t *testing.T) {
 	}
 }
 
-func TestV6MTUDrop(t *testing.T) {
+func TestV6TooBigGetsICMPv6Reply(t *testing.T) {
 	p := setup6(t)
+	cli := netip.MustParseAddr("2001:db8:1::1")
 	// 40 + 1450 + 20 > 1500
-	big := ip6Pkt(17, netip.MustParseAddr("2001:db8:1::1"), vip6, append(udpHdr(1000, 53), make([]byte, 1450-24)...))
-	if ret, _ := run(t, p, frame6(big)); ret != xdpDrop {
+	big := ip6Pkt(17, cli, vip6, append(udpHdr(1000, 53), make([]byte, 1450-24)...))
+	ret, out := run(t, p, frame6(big))
+	if ret != xdpTX {
 		t.Fatalf("got %d", ret)
 	}
-	if counter(t, p, "drop_mtu") != 1 {
-		t.Fatal("drop_mtu")
+	if len(out) != 110 {
+		t.Fatalf("reply is %d bytes", len(out))
 	}
+	if counter(t, p, "drop_mtu") != 1 || counter(t, p, "icmp6_too_big") != 1 {
+		t.Fatal("counters")
+	}
+
+	// macs swapped, from the vip back to the client
+	if !bytes.Equal(out[0:6], cliMAC) || !bytes.Equal(out[6:12], lbMAC) {
+		t.Fatalf("macs % x / % x", out[0:6], out[6:12])
+	}
+	ip := out[14:54]
+	if ip[0]>>4 != 6 || ip[6] != 58 || binary.BigEndian.Uint16(ip[4:]) != 56 {
+		t.Fatalf("ip6 header % x", ip)
+	}
+	if netip.AddrFrom16([16]byte(ip[8:24])) != vip6 || netip.AddrFrom16([16]byte(ip[24:40])) != cli {
+		t.Fatalf("addresses % x", ip[8:40])
+	}
+
+	ic := out[54:]
+	if ic[0] != 2 || ic[1] != 0 {
+		t.Fatalf("icmp type/code %d/%d", ic[0], ic[1])
+	}
+	if mtu := binary.BigEndian.Uint32(ic[4:]); mtu != 1480 {
+		t.Fatalf("advertised mtu %d", mtu)
+	}
+	if !bytes.Equal(ic[8:], big[:48]) {
+		t.Fatal("quote doesn't match the original header")
+	}
+
+	// icmpv6 checksum covers the pseudo header too; summing all of it must give 0
+	pseudo := append(append([]byte{}, ip[8:40]...), 0, 0, 0, byte(len(ic)), 0, 0, 0, 58)
+	if csum(append(pseudo, ic...)) != 0 {
+		t.Fatal("icmpv6 checksum wrong")
+	}
+}
+
+func TestV6MTUBoundary(t *testing.T) {
+	p := setup6(t)
 	// just fits
 	ok := ip6Pkt(17, netip.MustParseAddr("2001:db8:1::1"), vip6, append(udpHdr(1000, 53), make([]byte, 1440-24)...))
 	if ret, _ := run(t, p, frame6(ok)); ret != xdpTX {

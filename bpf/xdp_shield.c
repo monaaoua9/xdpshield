@@ -297,6 +297,77 @@ static __always_inline int icmp_frag_needed(struct xdp_md *ctx, const struct glo
 }
 
 /* ct/ckey is the family's conntrack map and key, hk is the v4-shaped key we hash */
+/*
+ * v6 has no DF bit, routers are supposed to answer with packet too big and
+ * that is the only way pmtud works for us. Reply is eth + ip6 + 8 + a quote of
+ * the first 48 bytes (header and 8 bytes of l4), 110 bytes in total.
+ */
+#define ICMP6_REPLY_LEN (sizeof(struct ethhdr) + 40 + 8 + 48)
+
+struct icmp6_ptb {
+    __u8 type;
+    __u8 code;
+    __sum16 check;
+    __be32 mtu;
+};
+
+static __always_inline int icmp6_too_big(struct xdp_md *ctx, const struct global_cfg *cfg)
+{
+    void *data = (void *)(long)ctx->data;
+    void *end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth = data;
+    struct ipv6hdr *ip6 = (void *)(eth + 1);
+    struct icmp6_ptb *ic = (void *)(ip6 + 1);
+    __u8 quote[48], mac[ETH_ALEN];
+    struct addr6 client, vip;
+    __u32 sum = 0, len = end - data;
+    __u16 *w;
+
+    if (data + ICMP6_REPLY_LEN > end)
+        return -1;
+
+    __builtin_memcpy(&client, &ip6->saddr, sizeof(client));
+    __builtin_memcpy(&vip, &ip6->daddr, sizeof(vip));
+    __builtin_memcpy(quote, ip6, sizeof(quote));
+    __builtin_memcpy(mac, eth->h_source, ETH_ALEN);
+    __builtin_memcpy(eth->h_source, eth->h_dest, ETH_ALEN);
+    __builtin_memcpy(eth->h_dest, mac, ETH_ALEN);
+
+    __builtin_memcpy((void *)(ic + 1), quote, sizeof(quote));
+    ic->type = 2;
+    ic->code = 0;
+    ic->check = 0;
+    ic->mtu = bpf_htonl(cfg->max_ip_len - sizeof(struct iphdr));
+
+    ip6->version = 6;
+    ip6->priority = 0;
+    ip6->flow_lbl[0] = ip6->flow_lbl[1] = ip6->flow_lbl[2] = 0;
+    ip6->payload_len = bpf_htons(8 + 48);
+    ip6->nexthdr = IPPROTO_ICMPV6;
+    ip6->hop_limit = 64;
+    __builtin_memcpy(&ip6->saddr, &vip, sizeof(vip));
+    __builtin_memcpy(&ip6->daddr, &client, sizeof(client));
+
+    /* pseudo header: both addresses, upper layer length and next header, then the message */
+    w = (__u16 *)&ip6->saddr;
+#pragma unroll
+    for (int i = 0; i < 16; i++)
+        sum += w[i];
+    sum += bpf_htons(8 + 48);
+    sum += bpf_htons(IPPROTO_ICMPV6);
+    w = (__u16 *)ic;
+#pragma unroll
+    for (int i = 0; i < 28; i++)
+        sum += w[i];
+    sum = (sum & 0xffff) + (sum >> 16);
+    sum = (sum & 0xffff) + (sum >> 16);
+    ic->check = ~sum;
+
+    if (bpf_xdp_adjust_tail(ctx, (int)ICMP6_REPLY_LEN - (int)len))
+        return -1;
+    return 0;
+}
+
 static __always_inline int pick_backend(const struct global_cfg *cfg, const struct vip_val *vip,
                                         void *ct, const void *ckey,
                                         const struct flow_key *hk, __u32 *out)
@@ -502,6 +573,10 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
     /* 40 byte header + payload, plus the 20 bytes of outer ipv4 we are about to add */
     if (sizeof(struct ipv6hdr) + plen + sizeof(struct iphdr) > cfg->max_ip_len) {
         stat_add(STAT_DROP_MTU, 1);
+        if (icmp6_too_big(ctx, cfg) == 0) {
+            stat_add(STAT_ICMP6_TOO_BIG, 1);
+            return XDP_TX;
+        }
         return XDP_DROP;
     }
 
