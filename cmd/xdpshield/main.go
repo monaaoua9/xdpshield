@@ -33,7 +33,14 @@ func main() {
 	check := flag.Bool("check", false, "validate the config and exit")
 	showVer := flag.Bool("version", false, "print version and exit")
 	unpin := flag.Bool("unpin", false, "detach a pinned run (pin_path) and delete its maps, then exit")
+	logLevel := flag.String("log-level", "info", "debug, info, warn or error")
+	logFmt := flag.String("log-format", "text", "text or json")
 	flag.Parse()
+
+	if err := setupLog(*logLevel, *logFmt); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
 	if *showVer {
 		fmt.Println(version)
@@ -67,6 +74,23 @@ func main() {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+func setupLog(level, format string) error {
+	var lv slog.Level
+	if err := lv.UnmarshalText([]byte(level)); err != nil {
+		return fmt.Errorf("log-level: %q", level)
+	}
+	opts := &slog.HandlerOptions{Level: lv}
+	switch format {
+	case "text":
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, opts)))
+	case "json":
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, opts)))
+	default:
+		return fmt.Errorf("log-format: %q, want text or json", format)
+	}
+	return nil
 }
 
 func run(path string, cfg *config.Config) error {
