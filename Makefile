@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 BIN     := bin/xdpshield
 GOFLAGS := -trimpath -ldflags "-s -w -X main.version=$(VERSION)"
 
-.PHONY: all build generate test test-unit test-integration vet lint lab clean
+.PHONY: all build generate test test-unit test-integration fuzz vet lint lab clean
 
 all: build
 
@@ -30,6 +30,11 @@ vet:
 
 lint: vet
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+# random frames through the real program, root + linux
+fuzz:
+	go test -c -tags integration -o bin/dataplane.test ./internal/dataplane/
+	sudo ./bin/dataplane.test -test.run xxx -test.fuzz FuzzXDP -test.fuzztime 60s
 
 # veth + netns lab, see test/lab.sh
 lab:
