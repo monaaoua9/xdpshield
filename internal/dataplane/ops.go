@@ -256,6 +256,36 @@ func syncTrie[K comparable](m *ebpf.Map, want []K) error {
 	return nil
 }
 
+// SetAmplification makes amp_ports match ports exactly
+func (p *Plane) SetAmplification(ports []uint16, minLen uint16) error {
+	wanted := map[uint16]bool{}
+	for _, port := range ports {
+		k := port16(port)
+		wanted[k] = true
+		if err := p.objs.AmpPorts.Put(k, minLen); err != nil {
+			return fmt.Errorf("amp port %d: %w", port, err)
+		}
+	}
+
+	var stale []uint16
+	var k, v uint16
+	it := p.objs.AmpPorts.Iterate()
+	for it.Next(&k, &v) {
+		if !wanted[k] {
+			stale = append(stale, k)
+		}
+	}
+	if err := it.Err(); err != nil {
+		return err
+	}
+	for _, k := range stale {
+		if err := p.objs.AmpPorts.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *Plane) Block(ip netip.Addr, ttl time.Duration) error {
 	v := ShieldBlockVal{
 		ExpiresNs: nowMonotonic() + uint64(ttl),

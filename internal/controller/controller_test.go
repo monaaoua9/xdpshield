@@ -3,6 +3,7 @@ package controller
 import (
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,8 @@ type fakeDP struct {
 	setVIPs  int
 	allow    []netip.Prefix
 	deny     []netip.Prefix
+	ampPorts []uint16
+	ampMin   uint16
 	order    []string
 }
 
@@ -49,6 +52,11 @@ func (f *fakeDP) SetCIDRs(k CIDRKind, w []netip.Prefix) error {
 	} else {
 		f.deny = w
 	}
+	return nil
+}
+
+func (f *fakeDP) SetAmplification(ports []uint16, min uint16) error {
+	f.ampPorts, f.ampMin = ports, min
 	return nil
 }
 func (f *fakeDP) Block(netip.Addr, time.Duration) error { return nil }
@@ -96,6 +104,17 @@ func TestApplyProgramsEverything(t *testing.T) {
 	// every backend must be written before the first vip so no table dangles
 	if i := slices.Index(fp.order, "vip"); i != 3 {
 		t.Fatalf("bad order %v", fp.order)
+	}
+}
+
+func TestAmplificationPushed(t *testing.T) {
+	fp := newFake()
+	raw := strings.Replace(base, "enabled: true", "enabled: true\n  amplification: {ports: [53, 123], min_size: 120}", 1)
+	if err := New(fp).Apply(mustCfg(t, raw)); err != nil {
+		t.Fatal(err)
+	}
+	if len(fp.ampPorts) != 2 || fp.ampMin != 120 {
+		t.Fatalf("got %v / %d", fp.ampPorts, fp.ampMin)
 	}
 }
 

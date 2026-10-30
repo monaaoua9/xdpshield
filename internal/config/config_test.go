@@ -69,6 +69,24 @@ func TestIPv6VIPAndCIDRs(t *testing.T) {
 	}
 }
 
+func TestAmplificationValidation(t *testing.T) {
+	with := func(list string) string {
+		return strings.Replace(good, "ddos:\n", "ddos:\n  amplification: {ports: "+list+", min_size: 200}\n", 1)
+	}
+	c, err := Parse([]byte(with("[53, 123, 11211]")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := c.DDoS.Amplification; len(a.Ports) != 3 || a.MinSize != 200 {
+		t.Fatalf("got %+v", a)
+	}
+	for _, bad := range []string{"[53, 53]", "[0]"} {
+		if _, err := Parse([]byte(with(bad))); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
+	}
+}
+
 func TestExampleConfigIsValid(t *testing.T) {
 	if _, err := Load("../../configs/example.yaml"); err != nil {
 		t.Fatal(err)

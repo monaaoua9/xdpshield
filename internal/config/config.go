@@ -14,6 +14,7 @@ import (
 const (
 	MaxVIPs     = 64
 	MaxBackends = 1024
+	MaxAmpPorts = 64
 )
 
 type Config struct {
@@ -40,6 +41,15 @@ type DDoS struct {
 	BlockTTL    time.Duration  `yaml:"block_ttl"`
 	Allow       []netip.Prefix `yaml:"allow"`
 	Deny        []netip.Prefix `yaml:"deny"`
+
+	Amplification Amplification `yaml:"amplification"`
+}
+
+// Amplification drops reflected udp answers (source port in Ports) that land on
+// a vip address without matching any vip. empty Ports = off.
+type Amplification struct {
+	Ports   []uint16 `yaml:"ports"`
+	MinSize uint16   `yaml:"min_size"` // smallest udp length (header included) to drop, 0 = any
 }
 
 type Health struct {
@@ -171,6 +181,18 @@ func (c *Config) Validate() error {
 		if !p.IsValid() || p.Addr().Is4In6() {
 			return fmt.Errorf("cidr %s: use a plain ipv4 or ipv6 prefix", p)
 		}
+	}
+
+	amp := c.DDoS.Amplification
+	if len(amp.Ports) > MaxAmpPorts {
+		return fmt.Errorf("too many amplification ports (%d > %d)", len(amp.Ports), MaxAmpPorts)
+	}
+	ampSeen := map[uint16]bool{}
+	for _, p := range amp.Ports {
+		if p == 0 || ampSeen[p] {
+			return fmt.Errorf("amplification port %d is zero or listed twice", p)
+		}
+		ampSeen[p] = true
 	}
 
 	bes := map[string]Backend{}

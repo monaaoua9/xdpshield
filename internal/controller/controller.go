@@ -52,6 +52,7 @@ type Dataplane interface {
 	SetVIP(id uint32, k VIPKey, algo uint32, table []uint32) error
 	DelVIP(id uint32, k VIPKey) error
 	SetCIDRs(kind CIDRKind, want []netip.Prefix) error
+	SetAmplification(ports []uint16, minLen uint16) error
 	Block(ip netip.Addr, ttl time.Duration) error
 	Unblock(ip netip.Addr) error
 	Blocked() ([]BlockedEntry, error)
@@ -150,6 +151,10 @@ func (c *Controller) reconcile() error {
 	}
 	if err := c.dp.SetCIDRs(Deny, cfg.DDoS.Deny); err != nil {
 		return fmt.Errorf("deny list: %w", err)
+	}
+
+	if err := c.dp.SetAmplification(cfg.DDoS.Amplification.Ports, cfg.DDoS.Amplification.MinSize); err != nil {
+		return fmt.Errorf("amplification ports: %w", err)
 	}
 
 	seen := map[string]bool{}
