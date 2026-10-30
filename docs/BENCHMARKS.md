@@ -41,7 +41,7 @@ GOOS=linux GOARCH=amd64 go test -c -tags integration -o xdp.test ./internal/data
 - The load-balancing paths (header rewrite, checksum, IPIP encapsulation) cost roughly 20–50 ns more than the cheapest drop.
 - The "bad TCP flags" drop is the slowest case here (about 170 ns), slower than the LB paths even though it does less. I haven't looked into why.
 - The IPv6 rows are noisier than the v4 ones (the established flow ranges 243 – 338 ns) and I only ran three repetitions, so treat them as a rough range. The established v6 flow is the slowest path here, which is plausible given the 16-byte keys and the larger outer header, but I haven't profiled it.
-- These numbers are higher than the previous run's for the same v4 paths (established LB flow 135 ns against 138 ns, host traffic 169 against 123). The program changed in between (dual stack, token bucket), but the core's clock also moves between days, so use ratios between rows, not absolute values across days.
+- Compared with the previous run, the LB paths are about the same (established flow 135 ns against 138) but the drop and pass paths moved up (host traffic 169 against 123, deny CIDR 135 against 106). The program changed in between (dual stack, token bucket), but the core's clock also moves between days, so use ratios between rows, not absolute values across days.
 
 ## What has not been measured
 
