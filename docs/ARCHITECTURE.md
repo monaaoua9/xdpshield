@@ -16,7 +16,8 @@ The datapath never decides policy. Thresholds, backend sets, weights and lists a
         ┌─────────────────────────── xdp_shield ───────────────────────────┐
         │ 1 parse eth + ipv4 (bounds checked), sanity: version, ihl, tot_len │
         │     martian source (0/8, 127/8, 224/4, 255.255.255.255) ─► DROP    │
-        │     not ipv4 (arp, ipv6, vlan) ─────────────────────────► PASS    │
+        │     ipv6: same steps 2-7 on its own maps (v6 suffix)               │
+        │     not ip (arp, vlan) ─────────────────────────────────► PASS    │
         │                                                                    │
         │ 2 dyn_blocklist[src]  hit and not expired ──────────────► DROP     │
         │   deny_cidr (LPM)     hit ──────────────────────────────► DROP     │
