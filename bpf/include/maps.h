@@ -93,6 +93,14 @@ struct {
     __type(value, struct lpm_val);
 } allow_cidr SEC(".maps");
 
+/* udp source ports that reflection attacks come from, value = smallest l4 length to drop */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, AMP_PORTS_MAX);
+    __type(key, __be16);
+    __type(value, __u16);
+} amp_ports SEC(".maps");
+
 /* ipv6 twins of the maps above. backends, lb tables and stats are shared */
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);

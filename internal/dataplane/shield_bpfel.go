@@ -143,6 +143,7 @@ type ShieldVipVal struct {
 const (
 	ShieldMapAllowCidr        = "allow_cidr"
 	ShieldMapAllowCidr6       = "allow_cidr6"
+	ShieldMapAmpPorts         = "amp_ports"
 	ShieldMapBackendMap       = "backend_map"
 	ShieldMapBackendStats     = "backend_stats"
 	ShieldMapConfigMap        = "config_map"
@@ -218,6 +219,7 @@ type ShieldProgramSpecs struct {
 type ShieldMapSpecs struct {
 	AllowCidr     *ebpf.MapSpec `ebpf:"allow_cidr"`
 	AllowCidr6    *ebpf.MapSpec `ebpf:"allow_cidr6"`
+	AmpPorts      *ebpf.MapSpec `ebpf:"amp_ports"`
 	BackendMap    *ebpf.MapSpec `ebpf:"backend_map"`
 	BackendStats  *ebpf.MapSpec `ebpf:"backend_stats"`
 	ConfigMap     *ebpf.MapSpec `ebpf:"config_map"`
@@ -269,6 +271,7 @@ func (o *ShieldObjects) Close() error {
 type ShieldMaps struct {
 	AllowCidr     *ebpf.Map `ebpf:"allow_cidr"`
 	AllowCidr6    *ebpf.Map `ebpf:"allow_cidr6"`
+	AmpPorts      *ebpf.Map `ebpf:"amp_ports"`
 	BackendMap    *ebpf.Map `ebpf:"backend_map"`
 	BackendStats  *ebpf.Map `ebpf:"backend_stats"`
 	ConfigMap     *ebpf.Map `ebpf:"config_map"`
@@ -295,6 +298,7 @@ func (m *ShieldMaps) Close() error {
 	return _ShieldClose(
 		m.AllowCidr,
 		m.AllowCidr6,
+		m.AmpPorts,
 		m.BackendMap,
 		m.BackendStats,
 		m.ConfigMap,

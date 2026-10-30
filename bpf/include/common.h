@@ -11,6 +11,7 @@
 #define RATE_STATE_MAX  262144
 #define BLOCKLIST_MAX   262144
 #define CIDR_MAX        16384
+#define AMP_PORTS_MAX   64
 #define EVENTS_SIZE     (1 << 20)
 
 #define NSEC_PER_SEC    1000000000ULL
@@ -64,6 +65,7 @@ enum stat_id {
     STAT_DROP_ENCAP,
     STAT_ICMP_FRAG_NEEDED,
     STAT_ICMP6_TOO_BIG,
+    STAT_DROP_AMPLIFICATION,
     STAT_MAX,
 };
 

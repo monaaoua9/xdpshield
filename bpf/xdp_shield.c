@@ -148,6 +148,17 @@ static __always_inline __u32 rate_bump(void *map, const void *src, __u64 now, in
     return r->udp;
 }
 
+/*
+ * reflected udp answers (dns, ntp, memcached...) aimed at one of our vip
+ * addresses on a port that isn't a vip. nothing behind us asked for them.
+ */
+static __always_inline int amp_reply(__be16 sport, __u32 l4len)
+{
+    __u16 *min = bpf_map_lookup_elem(&amp_ports, &sport);
+
+    return min && l4len >= *min;
+}
+
 static __always_inline int cidr_hit(void *map, __be32 addr)
 {
     struct lpm_key k = { .prefixlen = 32, .addr = addr };
@@ -545,6 +556,11 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
     vk.proto = p.proto;
     vip = bpf_map_lookup_elem(&vip6_map, &vk);
     if (!vip) {
+        if (p.proto == IPPROTO_UDP && (cfg->flags & CFG_DDOS_ENABLED) &&
+            amp_reply(p.sport, plen) &&
+            bpf_map_lookup_elem(&vip6_addrs, &dst) &&
+            !cidr_hit6(&allow_cidr6, &src))
+            return drop(STAT_DROP_AMPLIFICATION);
         stat_add(STAT_PASS, 1);
         return XDP_PASS;
     }
@@ -690,6 +706,11 @@ int xdp_shield(struct xdp_md *ctx)
     vk.proto = p.proto;
     vip = bpf_map_lookup_elem(&vip_map, &vk);
     if (!vip) {
+        if (p.proto == IPPROTO_UDP && (cfg->flags & CFG_DDOS_ENABLED) &&
+            amp_reply(p.sport, bpf_ntohs(p.ip->tot_len) - p.ip->ihl * 4) &&
+            bpf_map_lookup_elem(&vip_addrs, &p.ip->daddr) &&
+            !cidr_hit(&allow_cidr, p.ip->saddr))
+            return drop(STAT_DROP_AMPLIFICATION);
         stat_add(STAT_PASS, 1);
         return XDP_PASS;
     }
