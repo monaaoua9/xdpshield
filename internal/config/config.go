@@ -23,6 +23,8 @@ type Config struct {
 	Interface string `yaml:"interface"`
 	XDPMode   string `yaml:"xdp_mode"` // auto, native, generic
 	Listen    string `yaml:"listen"`
+	// directory on bpffs; set it and maps, conntrack and the xdp link survive a restart
+	PinPath string `yaml:"pin_path"`
 	// name of the env var holding the admin bearer token, empty = mutating admin routes disabled
 	AdminTokenEnv string `yaml:"admin_token_env"`
 
@@ -187,6 +189,9 @@ func (c *Config) defaults() {
 func (c *Config) Validate() error {
 	if c.Interface == "" {
 		return fmt.Errorf("interface is required")
+	}
+	if c.PinPath != "" && !filepath.IsAbs(c.PinPath) {
+		return fmt.Errorf("pin_path must be an absolute path")
 	}
 	switch c.XDPMode {
 	case "auto", "native", "generic":
