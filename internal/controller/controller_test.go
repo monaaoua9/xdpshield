@@ -2,7 +2,9 @@ package controller
 
 import (
 	"net/netip"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +19,8 @@ type fakeDP struct {
 	setVIPs  int
 	allow    []netip.Prefix
 	deny     []netip.Prefix
+	ampPorts []uint16
+	ampMin   uint16
 	order    []string
 }
 
@@ -49,6 +53,11 @@ func (f *fakeDP) SetCIDRs(k CIDRKind, w []netip.Prefix) error {
 	} else {
 		f.deny = w
 	}
+	return nil
+}
+
+func (f *fakeDP) SetAmplification(ports []uint16, min uint16) error {
+	f.ampPorts, f.ampMin = ports, min
 	return nil
 }
 func (f *fakeDP) Block(netip.Addr, time.Duration) error { return nil }
@@ -96,6 +105,47 @@ func TestApplyProgramsEverything(t *testing.T) {
 	// every backend must be written before the first vip so no table dangles
 	if i := slices.Index(fp.order, "vip"); i != 3 {
 		t.Fatalf("bad order %v", fp.order)
+	}
+}
+
+func TestAmplificationPushed(t *testing.T) {
+	fp := newFake()
+	raw := strings.Replace(base, "enabled: true", "enabled: true\n  amplification: {ports: [53, 123], min_size: 120}", 1)
+	if err := New(fp).Apply(mustCfg(t, raw)); err != nil {
+		t.Fatal(err)
+	}
+	if len(fp.ampPorts) != 2 || fp.ampMin != 120 {
+		t.Fatalf("got %v / %d", fp.ampPorts, fp.ampMin)
+	}
+}
+
+func TestDrainKeepsBackendActiveButOutOfTables(t *testing.T) {
+	fp := newFake()
+	c := New(fp)
+	c.Apply(mustCfg(t, base))
+	idA, _ := c.beIDs.lookup("a")
+	idB, _ := c.beIDs.lookup("b")
+
+	drained := strings.Replace(base, "address: 10.0.1.2,", "address: 10.0.1.2, drain: true,", 1)
+	if err := c.Apply(mustCfg(t, drained)); err != nil {
+		t.Fatal(err)
+	}
+	if !fp.backends[idB] {
+		t.Fatal("drained backend must stay active so tracked flows keep working")
+	}
+	for _, id := range fp.tables[0] {
+		if id != idA {
+			t.Fatalf("new flows still routed to %d", id)
+		}
+	}
+
+	// draining the last one doesn't blackhole the vip
+	both := strings.Replace(drained, "address: 10.0.1.1,", "address: 10.0.1.1, drain: true,", 1)
+	if err := c.Apply(mustCfg(t, both)); err != nil {
+		t.Fatal(err)
+	}
+	if len(fp.tables[0]) == 0 {
+		t.Fatal("empty table")
 	}
 }
 
@@ -188,5 +238,58 @@ func TestIDsNotReusedImmediately(t *testing.T) {
 	}
 	if _, err := p.get("f"); err == nil {
 		t.Fatal("expected exhaustion")
+	}
+}
+
+func TestRestoreKeepsIDsAndCleansStale(t *testing.T) {
+	first := newFake()
+	c1 := New(first)
+	if err := c1.Apply(mustCfg(t, base)); err != nil {
+		t.Fatal(err)
+	}
+	idC, _ := c1.beIDs.lookup("c")
+	st := c1.State()
+
+	// round trip through the file like main does
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := SaveState(path, st); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// restarted process, same kernel state: backend order flipped and "a" is gone
+	second := newFake()
+	second.backends = map[uint32]bool{}
+	for id, up := range first.backends {
+		second.backends[id] = up
+	}
+	c2 := New(second)
+	c2.Restore(loaded)
+
+	next := strings.Replace(base, `  - {name: a, address: 10.0.1.1, mac: "02:00:00:00:00:01"}
+`, "", 1)
+	next = strings.Replace(next, "backends: [{name: a}, {name: b}]", "backends: [{name: b}, {name: c}]", 1)
+	if err := c2.Apply(mustCfg(t, next)); err != nil {
+		t.Fatal(err)
+	}
+	if id, _ := c2.beIDs.lookup("c"); id != idC {
+		t.Fatalf("c moved from %d to %d", idC, id)
+	}
+	idA, _ := c1.beIDs.lookup("a")
+	if _, still := second.backends[idA]; still {
+		t.Fatal("stale backend a was not removed")
+	}
+	if len(second.vips) != 1 {
+		t.Fatalf("vips %v", second.vips)
+	}
+}
+
+func TestLoadStateMissingFileIsEmpty(t *testing.T) {
+	s, err := LoadState(filepath.Join(t.TempDir(), "nope.json"))
+	if err != nil || len(s.Backends) != 0 {
+		t.Fatalf("%+v %v", s, err)
 	}
 }

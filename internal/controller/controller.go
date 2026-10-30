@@ -26,7 +26,9 @@ type Global struct {
 	SynLimitPPS uint32
 	UDPLimitPPS uint32
 	BlockTTL    time.Duration
-	EncapSrc    netip.Addr
+	EncapSrc    netip.Addr // outer src towards ipv4 backends, may be unset
+	EncapSrc6   netip.Addr // same for ipv6 backends
+	Overhead    int        // bytes the tunnel adds, 40 as soon as one backend is ipv6
 	MTU         int
 	HashSeed    uint32
 }
@@ -52,6 +54,7 @@ type Dataplane interface {
 	SetVIP(id uint32, k VIPKey, algo uint32, table []uint32) error
 	DelVIP(id uint32, k VIPKey) error
 	SetCIDRs(kind CIDRKind, want []netip.Prefix) error
+	SetAmplification(ports []uint16, minLen uint16) error
 	Block(ip netip.Addr, ttl time.Duration) error
 	Unblock(ip netip.Addr) error
 	Blocked() ([]BlockedEntry, error)
@@ -121,8 +124,15 @@ func (c *Controller) reconcile() error {
 		UDPLimitPPS: cfg.DDoS.UDPLimitPPS,
 		BlockTTL:    cfg.DDoS.BlockTTL,
 		EncapSrc:    cfg.EncapSrc,
+		EncapSrc6:   cfg.EncapSrc6,
+		Overhead:    20,
 		MTU:         cfg.MTU,
 		HashSeed:    cfg.HashSeed,
+	}
+	for _, b := range cfg.Backends {
+		if b.Address.Is6() {
+			g.Overhead = 40
+		}
 	}
 	if err := c.dp.SetGlobal(g); err != nil {
 		return fmt.Errorf("global config: %w", err)
@@ -150,6 +160,10 @@ func (c *Controller) reconcile() error {
 	}
 	if err := c.dp.SetCIDRs(Deny, cfg.DDoS.Deny); err != nil {
 		return fmt.Errorf("deny list: %w", err)
+	}
+
+	if err := c.dp.SetAmplification(cfg.DDoS.Amplification.Ports, cfg.DDoS.Amplification.MinSize); err != nil {
+		return fmt.Errorf("amplification ports: %w", err)
 	}
 
 	seen := map[string]bool{}
@@ -194,10 +208,15 @@ func (c *Controller) syncVIP(v config.VIP) error {
 		return err
 	}
 
+	draining := map[string]bool{}
+	for _, b := range c.cfg.Backends {
+		draining[b.Name] = b.Drain
+	}
+
 	members := func(onlyHealthy bool) []maglev.Backend {
 		var out []maglev.Backend
 		for _, m := range v.Backends {
-			if onlyHealthy && !c.healthy(m.Name) {
+			if onlyHealthy && (!c.healthy(m.Name) || draining[m.Name]) {
 				continue
 			}
 			bid, _ := c.beIDs.lookup(m.Name)
@@ -208,7 +227,7 @@ func (c *Controller) syncVIP(v config.VIP) error {
 
 	bs := members(true)
 	if len(bs) == 0 {
-		// everything is down: better to try them all than blackhole the vip
+		// everything is down or draining: better to try them all than blackhole the vip
 		bs = members(false)
 	}
 

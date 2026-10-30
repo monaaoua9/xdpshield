@@ -13,12 +13,18 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type ShieldAddr6 struct {
+	_ structs.HostLayout
+	B [16]uint8
+}
+
 type ShieldBackend struct {
 	_      structs.HostLayout
 	Addr   uint32
 	Mac    [6]uint8
 	Active uint8
-	Pad    uint8
+	Family uint8
+	Addr6  ShieldAddr6
 }
 
 type ShieldBlockEvent struct {
@@ -27,7 +33,9 @@ type ShieldBlockEvent struct {
 	Src         uint32
 	Reason      uint32
 	ObservedPps uint32
-	Pad         uint32
+	Family      uint8
+	Pad         [3]uint8
+	Src6        ShieldAddr6
 }
 
 type ShieldBlockVal struct {
@@ -41,6 +49,16 @@ type ShieldFlowKey struct {
 	_     structs.HostLayout
 	Src   uint32
 	Dst   uint32
+	Sport uint16
+	Dport uint16
+	Proto uint8
+	Pad   [3]uint8
+}
+
+type ShieldFlowKey6 struct {
+	_     structs.HostLayout
+	Src   ShieldAddr6
+	Dst   ShieldAddr6
 	Sport uint16
 	Dport uint16
 	Proto uint8
@@ -63,7 +81,8 @@ type ShieldGlobalCfg struct {
 	EncapSrc    uint32
 	MaxIpLen    uint32
 	HashSeed    uint32
-	Pad         uint32
+	Overhead    uint32
+	EncapSrc6   ShieldAddr6
 }
 
 type ShieldLpmKey struct {
@@ -72,16 +91,21 @@ type ShieldLpmKey struct {
 	Addr      uint32
 }
 
+type ShieldLpmKey6 struct {
+	_         structs.HostLayout
+	Prefixlen uint32
+	Addr      ShieldAddr6
+}
+
 type ShieldLpmVal struct {
 	_     structs.HostLayout
 	Flags uint32
 }
 
 type ShieldRateVal struct {
-	_             structs.HostLayout
-	WindowStartNs uint64
-	Syn           uint32
-	Udp           uint32
+	_      structs.HostLayout
+	SynTat uint64
+	UdpTat uint64
 }
 
 type ShieldTrafficStat struct {
@@ -93,6 +117,14 @@ type ShieldTrafficStat struct {
 type ShieldVipKey struct {
 	_     structs.HostLayout
 	Addr  uint32
+	Port  uint16
+	Proto uint8
+	Pad   uint8
+}
+
+type ShieldVipKey6 struct {
+	_     structs.HostLayout
+	Addr  ShieldAddr6
 	Port  uint16
 	Proto uint8
 	Pad   uint8
@@ -111,17 +143,25 @@ type ShieldVipVal struct {
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
 	ShieldMapAllowCidr        = "allow_cidr"
+	ShieldMapAllowCidr6       = "allow_cidr6"
+	ShieldMapAmpPorts         = "amp_ports"
 	ShieldMapBackendMap       = "backend_map"
 	ShieldMapBackendStats     = "backend_stats"
 	ShieldMapConfigMap        = "config_map"
 	ShieldMapConnTrack        = "conn_track"
+	ShieldMapConnTrack6       = "conn_track6"
 	ShieldMapDenyCidr         = "deny_cidr"
+	ShieldMapDenyCidr6        = "deny_cidr6"
 	ShieldMapDynBlocklist     = "dyn_blocklist"
+	ShieldMapDynBlocklist6    = "dyn_blocklist6"
 	ShieldMapEvents           = "events"
 	ShieldMapLbTables         = "lb_tables"
 	ShieldMapRateState        = "rate_state"
+	ShieldMapRateState6       = "rate_state6"
 	ShieldMapRrCursor         = "rr_cursor"
 	ShieldMapStats            = "stats"
+	ShieldMapVip6Addrs        = "vip6_addrs"
+	ShieldMapVip6Map          = "vip6_map"
 	ShieldMapVipAddrs         = "vip_addrs"
 	ShieldMapVipMap           = "vip_map"
 	ShieldMapVipStats         = "vip_stats"
@@ -178,21 +218,29 @@ type ShieldProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type ShieldMapSpecs struct {
-	AllowCidr    *ebpf.MapSpec `ebpf:"allow_cidr"`
-	BackendMap   *ebpf.MapSpec `ebpf:"backend_map"`
-	BackendStats *ebpf.MapSpec `ebpf:"backend_stats"`
-	ConfigMap    *ebpf.MapSpec `ebpf:"config_map"`
-	ConnTrack    *ebpf.MapSpec `ebpf:"conn_track"`
-	DenyCidr     *ebpf.MapSpec `ebpf:"deny_cidr"`
-	DynBlocklist *ebpf.MapSpec `ebpf:"dyn_blocklist"`
-	Events       *ebpf.MapSpec `ebpf:"events"`
-	LbTables     *ebpf.MapSpec `ebpf:"lb_tables"`
-	RateState    *ebpf.MapSpec `ebpf:"rate_state"`
-	RrCursor     *ebpf.MapSpec `ebpf:"rr_cursor"`
-	Stats        *ebpf.MapSpec `ebpf:"stats"`
-	VipAddrs     *ebpf.MapSpec `ebpf:"vip_addrs"`
-	VipMap       *ebpf.MapSpec `ebpf:"vip_map"`
-	VipStats     *ebpf.MapSpec `ebpf:"vip_stats"`
+	AllowCidr     *ebpf.MapSpec `ebpf:"allow_cidr"`
+	AllowCidr6    *ebpf.MapSpec `ebpf:"allow_cidr6"`
+	AmpPorts      *ebpf.MapSpec `ebpf:"amp_ports"`
+	BackendMap    *ebpf.MapSpec `ebpf:"backend_map"`
+	BackendStats  *ebpf.MapSpec `ebpf:"backend_stats"`
+	ConfigMap     *ebpf.MapSpec `ebpf:"config_map"`
+	ConnTrack     *ebpf.MapSpec `ebpf:"conn_track"`
+	ConnTrack6    *ebpf.MapSpec `ebpf:"conn_track6"`
+	DenyCidr      *ebpf.MapSpec `ebpf:"deny_cidr"`
+	DenyCidr6     *ebpf.MapSpec `ebpf:"deny_cidr6"`
+	DynBlocklist  *ebpf.MapSpec `ebpf:"dyn_blocklist"`
+	DynBlocklist6 *ebpf.MapSpec `ebpf:"dyn_blocklist6"`
+	Events        *ebpf.MapSpec `ebpf:"events"`
+	LbTables      *ebpf.MapSpec `ebpf:"lb_tables"`
+	RateState     *ebpf.MapSpec `ebpf:"rate_state"`
+	RateState6    *ebpf.MapSpec `ebpf:"rate_state6"`
+	RrCursor      *ebpf.MapSpec `ebpf:"rr_cursor"`
+	Stats         *ebpf.MapSpec `ebpf:"stats"`
+	Vip6Addrs     *ebpf.MapSpec `ebpf:"vip6_addrs"`
+	Vip6Map       *ebpf.MapSpec `ebpf:"vip6_map"`
+	VipAddrs      *ebpf.MapSpec `ebpf:"vip_addrs"`
+	VipMap        *ebpf.MapSpec `ebpf:"vip_map"`
+	VipStats      *ebpf.MapSpec `ebpf:"vip_stats"`
 }
 
 // ShieldVariableSpecs contains global variables before they are loaded into the kernel.
@@ -222,37 +270,53 @@ func (o *ShieldObjects) Close() error {
 //
 // It can be passed to LoadShieldObjects or ebpf.CollectionSpec.LoadAndAssign.
 type ShieldMaps struct {
-	AllowCidr    *ebpf.Map `ebpf:"allow_cidr"`
-	BackendMap   *ebpf.Map `ebpf:"backend_map"`
-	BackendStats *ebpf.Map `ebpf:"backend_stats"`
-	ConfigMap    *ebpf.Map `ebpf:"config_map"`
-	ConnTrack    *ebpf.Map `ebpf:"conn_track"`
-	DenyCidr     *ebpf.Map `ebpf:"deny_cidr"`
-	DynBlocklist *ebpf.Map `ebpf:"dyn_blocklist"`
-	Events       *ebpf.Map `ebpf:"events"`
-	LbTables     *ebpf.Map `ebpf:"lb_tables"`
-	RateState    *ebpf.Map `ebpf:"rate_state"`
-	RrCursor     *ebpf.Map `ebpf:"rr_cursor"`
-	Stats        *ebpf.Map `ebpf:"stats"`
-	VipAddrs     *ebpf.Map `ebpf:"vip_addrs"`
-	VipMap       *ebpf.Map `ebpf:"vip_map"`
-	VipStats     *ebpf.Map `ebpf:"vip_stats"`
+	AllowCidr     *ebpf.Map `ebpf:"allow_cidr"`
+	AllowCidr6    *ebpf.Map `ebpf:"allow_cidr6"`
+	AmpPorts      *ebpf.Map `ebpf:"amp_ports"`
+	BackendMap    *ebpf.Map `ebpf:"backend_map"`
+	BackendStats  *ebpf.Map `ebpf:"backend_stats"`
+	ConfigMap     *ebpf.Map `ebpf:"config_map"`
+	ConnTrack     *ebpf.Map `ebpf:"conn_track"`
+	ConnTrack6    *ebpf.Map `ebpf:"conn_track6"`
+	DenyCidr      *ebpf.Map `ebpf:"deny_cidr"`
+	DenyCidr6     *ebpf.Map `ebpf:"deny_cidr6"`
+	DynBlocklist  *ebpf.Map `ebpf:"dyn_blocklist"`
+	DynBlocklist6 *ebpf.Map `ebpf:"dyn_blocklist6"`
+	Events        *ebpf.Map `ebpf:"events"`
+	LbTables      *ebpf.Map `ebpf:"lb_tables"`
+	RateState     *ebpf.Map `ebpf:"rate_state"`
+	RateState6    *ebpf.Map `ebpf:"rate_state6"`
+	RrCursor      *ebpf.Map `ebpf:"rr_cursor"`
+	Stats         *ebpf.Map `ebpf:"stats"`
+	Vip6Addrs     *ebpf.Map `ebpf:"vip6_addrs"`
+	Vip6Map       *ebpf.Map `ebpf:"vip6_map"`
+	VipAddrs      *ebpf.Map `ebpf:"vip_addrs"`
+	VipMap        *ebpf.Map `ebpf:"vip_map"`
+	VipStats      *ebpf.Map `ebpf:"vip_stats"`
 }
 
 func (m *ShieldMaps) Close() error {
 	return _ShieldClose(
 		m.AllowCidr,
+		m.AllowCidr6,
+		m.AmpPorts,
 		m.BackendMap,
 		m.BackendStats,
 		m.ConfigMap,
 		m.ConnTrack,
+		m.ConnTrack6,
 		m.DenyCidr,
+		m.DenyCidr6,
 		m.DynBlocklist,
+		m.DynBlocklist6,
 		m.Events,
 		m.LbTables,
 		m.RateState,
+		m.RateState6,
 		m.RrCursor,
 		m.Stats,
+		m.Vip6Addrs,
+		m.Vip6Map,
 		m.VipAddrs,
 		m.VipMap,
 		m.VipStats,

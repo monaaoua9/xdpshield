@@ -1,10 +1,14 @@
 package health
 
 import (
+	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,5 +85,40 @@ func TestFlapsDownAndUp(t *testing.T) {
 	defer mu.Unlock()
 	if events[0] != false || events[1] != true {
 		t.Fatalf("events %v", events)
+	}
+}
+
+func TestHTTPCheckStatusCodes(t *testing.T) {
+	var code atomic.Int32
+	code.Store(200)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ready" {
+			w.WriteHeader(404)
+			return
+		}
+		w.WriteHeader(int(code.Load()))
+	}))
+	defer srv.Close()
+	addr := srv.Listener.Addr().String()
+
+	ctx := context.Background()
+	if !httpCheck(ctx, addr, "/ready", time.Second)() {
+		t.Fatal("200 should be healthy")
+	}
+	if httpCheck(ctx, addr, "/other", time.Second)() {
+		t.Fatal("404 should be unhealthy")
+	}
+	code.Store(503)
+	if httpCheck(ctx, addr, "/ready", time.Second)() {
+		t.Fatal("503 should be unhealthy")
+	}
+	code.Store(302)
+	if !httpCheck(ctx, addr, "/ready", time.Second)() {
+		t.Fatal("redirect counts as up and must not be followed")
+	}
+
+	srv.Close()
+	if httpCheck(ctx, addr, "/ready", 200*time.Millisecond)() {
+		t.Fatal("closed server is not healthy")
 	}
 }

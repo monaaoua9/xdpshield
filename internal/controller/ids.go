@@ -35,6 +35,15 @@ func (p *idPool) get(name string) (uint32, error) {
 	return id, nil
 }
 
+// adopt reserves an id that already exists elsewhere (restored state). ids
+// below it that nobody holds stay unused until the pool wraps.
+func (p *idPool) adopt(name string, id uint32) {
+	p.byKey[name] = id
+	if id >= p.next {
+		p.next = id + 1
+	}
+}
+
 func (p *idPool) lookup(name string) (uint32, bool) {
 	id, ok := p.byKey[name]
 	return id, ok

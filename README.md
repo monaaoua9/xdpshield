@@ -10,10 +10,12 @@ client ─► NIC ─► [ XDP: validate ─► blocklist ─► rate limit ─�
                         └─ stats, ring buffer ─► controller ─► /metrics, admin api, logs
 ```
 
+- **Dual stack**: IPv4 and IPv6 VIPs, blocklists, CIDR lists and backends, any mix. The tunnel is IPIP, 6in4, IPIP6 or IP6IP6 depending on the pair; oversized packets get ICMP frag-needed or ICMPv6 packet too big.
 - **Load balancing in the kernel**: Maglev consistent hashing or smooth weighted round robin per VIP, LRU connection tracking so established flows survive backend changes, DSR so responses bypass the balancer.
-- **DDoS**: malformed and martian packets, invalid TCP flag combinations, fragments to VIPs, per-source SYN and UDP rate limits with automatic TTL blocklisting, permanent allow/deny CIDRs. The packet that trips a limit creates the block; the controller is informed asynchronously.
+- **DDoS**: malformed and martian packets, invalid TCP flag combinations, fragments to VIPs, reflected UDP answers (DNS, NTP, memcached...) aimed at a VIP address, per-source SYN and UDP token-bucket rate limits with automatic TTL blocklisting, permanent allow/deny CIDRs (inline or from prefix list files such as country zones). The packet that trips a limit creates the block; the controller is informed asynchronously.
+- **Restarts without losing state**: with `pin_path` set, maps (conntrack, blocklists, counters) and the XDP link are pinned on bpffs. A restart reuses them and swaps the program inside the live link, so flows survive and there is no gap. `xdpshield -unpin` detaches for good.
 - **Live control**: YAML config, applied on file change or `SIGHUP`, diffed into map writes. VIP tables are swapped atomically via array-of-maps. Rejected configs leave the running state alone.
-- **Health checks**: TCP probes with fall/rise thresholds; unhealthy backends leave the table without touching other flows.
+- **Health checks**: TCP or HTTP (`health_check: http`, 2xx/3xx on `health_path`) probes with fall/rise thresholds; unhealthy backends leave the table without touching other flows, and `drain: true` stops new flows to a backend while tracked ones finish.
 - **Observability**: Prometheus counters read from per-CPU maps on scrape, ring buffer for block events, small admin API.
 
 Design details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (shorter version: [docs/DESIGN.md](docs/DESIGN.md)), verifier notes in [docs/VERIFIER.md](docs/VERIFIER.md).
@@ -27,6 +29,7 @@ bpf/                    datapath
   include/maps.h          map definitions
   include/parsing.h       bounds-checked header parsing
 cmd/xdpshield/          main
+cmd/xdpshieldctl/       cli for the admin api
 internal/
   config/                 yaml, defaults, validation
   controller/             config -> map writes, ids, health reactions
@@ -63,6 +66,13 @@ curl localhost:9100/metrics | grep xdpshield_
 curl localhost:9100/api/v1/status
 curl -H "Authorization: Bearer $XDPSHIELD_TOKEN" -d '{"ip":"203.0.113.77","ttl":"1h"}' localhost:9100/api/v1/blocklist
 kill -HUP $(pidof xdpshield)     # or just edit the file
+
+bin/xdpshieldctl status          # vips, backends, health
+bin/xdpshieldctl blocked
+bin/xdpshieldctl block 203.0.113.77 1h    # token from $XDPSHIELD_TOKEN or -token
+bin/xdpshieldctl events 20
+bin/xdpshieldctl stats
+bin/xdpshieldctl top                      # live pps, drops by reason, backend health
 ```
 
 ## Tests
@@ -70,7 +80,8 @@ kill -HUP $(pidof xdpshield)     # or just edit the file
 ```sh
 make test-unit            # maglev, config, controller (fake dataplane), health, metrics, admin
 make test-integration     # root, linux: loads the real program and runs crafted packets through it
-test/lab.sh up && test/lab.sh test    # end to end with network namespaces
+test/lab.sh up && test/lab.sh test    # end to end with network namespaces: v4 and v6 vips, syn flood
+test/lab.sh restart                    # kill the daemon, traffic keeps flowing, restart picks the pins up
 ```
 
 The integration suite covers encapsulation (headers, checksum, MACs), flow stickiness, Maglev spread, WRR ratio, SYN/UDP flood blocking and unblocking, ring buffer events, allow/deny lists, bad flags, malformed frames, fragments, MTU drops and the ICMP frag-needed reply.
@@ -94,9 +105,9 @@ These are ceilings for the program on a slow laptop core, not NIC throughput: a 
 
 ## Status
 
-Unit tests pass. The program loads under the verifier of a 6.6 kernel (WSL2, clang 21) and all twelve `BPF_PROG_TEST_RUN` integration tests pass. The first load was rejected for an unbounded `tot_len` after the byte swap; that is fixed in `parsing.h`. `test/lab.sh` also ran on that kernel (generic XDP, netns): 20 requests to the VIP were answered through the IPIP path and the SYN flood got the client blocked. The lab backends share one /tmp, so it can't show the split between them; the integration tests cover that. Other kernels and NIC drivers (native XDP) have not been tried; CI runs the integration suite on every push.
+Unit tests pass. The program loads under the verifier of a 6.6 kernel (WSL2, clang 21) and the `BPF_PROG_TEST_RUN` integration tests (v4, v6, amplification, drain, rate limits) pass. The first load was rejected for an unbounded `tot_len` after the byte swap; that is fixed in `parsing.h`. `test/lab.sh` also ran on that kernel (generic XDP, netns): 20 requests to the VIP were answered through the IPIP path and the SYN flood got the client blocked. The lab backends share one /tmp, so it can't show the split between them; the integration tests cover that. Other kernels and NIC drivers (native XDP) have not been tried; CI runs the integration suite on every push.
 
-Known gaps are listed at the end of the architecture doc: IPv4 only, no SYN cookies.
+Known gaps are listed at the end of the architecture doc: no SYN cookies, no IPv6 extension header walking.
 
 ## License
 

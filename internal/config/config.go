@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -14,18 +16,25 @@ import (
 const (
 	MaxVIPs     = 64
 	MaxBackends = 1024
+	MaxAmpPorts = 64
 )
 
 type Config struct {
 	Interface string `yaml:"interface"`
 	XDPMode   string `yaml:"xdp_mode"` // auto, native, generic
 	Listen    string `yaml:"listen"`
+	// directory on bpffs; set it and maps, conntrack and the xdp link survive a restart
+	PinPath string `yaml:"pin_path"`
+	// where controller ids are kept for the next start; bpffs only holds bpf objects, so this
+	// is a normal file. defaults to /var/lib/xdpshield/state.json when pin_path is set
+	StateFile string `yaml:"state_file"`
 	// name of the env var holding the admin bearer token, empty = mutating admin routes disabled
 	AdminTokenEnv string `yaml:"admin_token_env"`
 
-	EncapSrc netip.Addr `yaml:"encap_src"`
-	MTU      int        `yaml:"mtu"`
-	HashSeed uint32     `yaml:"hash_seed"`
+	EncapSrc  netip.Addr `yaml:"encap_src"`  // needed with ipv4 backends
+	EncapSrc6 netip.Addr `yaml:"encap_src6"` // needed with ipv6 backends
+	MTU       int        `yaml:"mtu"`
+	HashSeed  uint32     `yaml:"hash_seed"`
 
 	DDoS     DDoS      `yaml:"ddos"`
 	Health   Health    `yaml:"health"`
@@ -40,6 +49,18 @@ type DDoS struct {
 	BlockTTL    time.Duration  `yaml:"block_ttl"`
 	Allow       []netip.Prefix `yaml:"allow"`
 	Deny        []netip.Prefix `yaml:"deny"`
+	// files of prefixes (country zones, drop lists...) merged into allow/deny on load
+	AllowLists []string `yaml:"allow_lists"`
+	DenyLists  []string `yaml:"deny_lists"`
+
+	Amplification Amplification `yaml:"amplification"`
+}
+
+// Amplification drops reflected udp answers (source port in Ports) that land on
+// a vip address without matching any vip. empty Ports = off.
+type Amplification struct {
+	Ports   []uint16 `yaml:"ports"`
+	MinSize uint16   `yaml:"min_size"` // smallest udp length (header included) to drop, 0 = any
 }
 
 type Health struct {
@@ -55,6 +76,11 @@ type Backend struct {
 	Address    netip.Addr `yaml:"address"`
 	MAC        string     `yaml:"mac"` // next hop mac on the lb's interface
 	HealthPort uint16     `yaml:"health_port"`
+	// tcp (default) or http; http wants a 2xx/3xx from health_path (default /)
+	HealthCheck string `yaml:"health_check"`
+	HealthPath  string `yaml:"health_path"`
+	// no new flows, tracked ones keep going until they end or age out
+	Drain bool `yaml:"drain"`
 }
 
 type VIP struct {
@@ -76,7 +102,17 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Parse(raw)
+	c, err := Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.expandLists(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("cidr lists: %w", err)
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func Parse(raw []byte) (*Config, error) {
@@ -96,6 +132,9 @@ func Parse(raw []byte) (*Config, error) {
 func (c *Config) defaults() {
 	if c.XDPMode == "" {
 		c.XDPMode = "auto"
+	}
+	if c.PinPath != "" && c.StateFile == "" {
+		c.StateFile = "/var/lib/xdpshield/state.json"
 	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:9100"
@@ -129,6 +168,15 @@ func (c *Config) defaults() {
 	if h.Rise == 0 {
 		h.Rise = 2
 	}
+	for i := range c.Backends {
+		b := &c.Backends[i]
+		if b.HealthCheck == "" {
+			b.HealthCheck = "tcp"
+		}
+		if b.HealthCheck == "http" && b.HealthPath == "" {
+			b.HealthPath = "/"
+		}
+	}
 	for i := range c.VIPs {
 		v := &c.VIPs[i]
 		if v.Proto == "" {
@@ -149,13 +197,33 @@ func (c *Config) Validate() error {
 	if c.Interface == "" {
 		return fmt.Errorf("interface is required")
 	}
+	if c.PinPath != "" && !filepath.IsAbs(c.PinPath) {
+		return fmt.Errorf("pin_path must be an absolute path")
+	}
+	if c.StateFile != "" && !filepath.IsAbs(c.StateFile) {
+		return fmt.Errorf("state_file must be an absolute path")
+	}
 	switch c.XDPMode {
 	case "auto", "native", "generic":
 	default:
 		return fmt.Errorf("xdp_mode %q: want auto, native or generic", c.XDPMode)
 	}
-	if !c.EncapSrc.Is4() {
+	if c.EncapSrc.IsValid() && !c.EncapSrc.Is4() {
 		return fmt.Errorf("encap_src must be an ipv4 address")
+	}
+	if c.EncapSrc6.IsValid() && (!c.EncapSrc6.Is6() || c.EncapSrc6.Is4In6()) {
+		return fmt.Errorf("encap_src6 must be an ipv6 address")
+	}
+	var have4, have6 bool
+	for _, b := range c.Backends {
+		have4 = have4 || b.Address.Is4()
+		have6 = have6 || b.Address.Is6()
+	}
+	if (have4 || len(c.Backends) == 0) && !c.EncapSrc.IsValid() {
+		return fmt.Errorf("encap_src is required (ipv4 backends tunnel from it)")
+	}
+	if have6 && !c.EncapSrc6.IsValid() {
+		return fmt.Errorf("encap_src6 is required when a backend has an ipv6 address")
 	}
 	if c.MTU < 576 || c.MTU > 9216 {
 		return fmt.Errorf("mtu %d out of range", c.MTU)
@@ -168,9 +236,28 @@ func (c *Config) Validate() error {
 	}
 
 	for _, p := range append(append([]netip.Prefix{}, c.DDoS.Allow...), c.DDoS.Deny...) {
-		if !p.Addr().Is4() {
-			return fmt.Errorf("cidr %s: only ipv4 is supported", p)
+		if !p.IsValid() || p.Addr().Is4In6() {
+			return fmt.Errorf("cidr %s: use a plain ipv4 or ipv6 prefix", p)
 		}
+	}
+
+	if err := checkCIDRCount("allow", c.DDoS.Allow); err != nil {
+		return err
+	}
+	if err := checkCIDRCount("deny", c.DDoS.Deny); err != nil {
+		return err
+	}
+
+	amp := c.DDoS.Amplification
+	if len(amp.Ports) > MaxAmpPorts {
+		return fmt.Errorf("too many amplification ports (%d > %d)", len(amp.Ports), MaxAmpPorts)
+	}
+	ampSeen := map[uint16]bool{}
+	for _, p := range amp.Ports {
+		if p == 0 || ampSeen[p] {
+			return fmt.Errorf("amplification port %d is zero or listed twice", p)
+		}
+		ampSeen[p] = true
 	}
 
 	bes := map[string]Backend{}
@@ -182,11 +269,17 @@ func (c *Config) Validate() error {
 		if _, dup := bes[b.Name]; dup {
 			return fmt.Errorf("duplicate backend %q", b.Name)
 		}
-		if !b.Address.Is4() {
-			return fmt.Errorf("backend %s: address must be ipv4", b.Name)
+		if !b.Address.IsValid() || b.Address.Is4In6() || b.Address.Zone() != "" {
+			return fmt.Errorf("backend %s: address must be plain ipv4 or ipv6", b.Name)
 		}
 		if other, dup := addrs[b.Address]; dup {
 			return fmt.Errorf("backend %s and %s share address %s", b.Name, other, b.Address)
+		}
+		if b.HealthCheck != "tcp" && b.HealthCheck != "http" {
+			return fmt.Errorf("backend %s: health_check %q, want tcp or http", b.Name, b.HealthCheck)
+		}
+		if b.HealthCheck == "http" && !strings.HasPrefix(b.HealthPath, "/") {
+			return fmt.Errorf("backend %s: health_path must start with /", b.Name)
 		}
 		if _, err := net.ParseMAC(b.MAC); err != nil {
 			return fmt.Errorf("backend %s: bad mac: %w", b.Name, err)
@@ -207,8 +300,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("vip name %q missing or duplicated", v.Name)
 		}
 		names[v.Name] = true
-		if !v.Address.Is4() {
-			return fmt.Errorf("vip %s: address must be ipv4", v.Name)
+		if !v.Address.IsValid() || v.Address.Is4In6() {
+			return fmt.Errorf("vip %s: address must be plain ipv4 or ipv6", v.Name)
 		}
 		if v.Port == 0 {
 			return fmt.Errorf("vip %s: port is required", v.Name)

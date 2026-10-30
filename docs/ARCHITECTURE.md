@@ -16,7 +16,8 @@ The datapath never decides policy. Thresholds, backend sets, weights and lists a
         ┌─────────────────────────── xdp_shield ───────────────────────────┐
         │ 1 parse eth + ipv4 (bounds checked), sanity: version, ihl, tot_len │
         │     martian source (0/8, 127/8, 224/4, 255.255.255.255) ─► DROP    │
-        │     not ipv4 (arp, ipv6, vlan) ─────────────────────────► PASS    │
+        │     ipv6: same steps 2-7 on its own maps (v6 suffix)               │
+        │     not ip (arp, vlan) ─────────────────────────────────► PASS    │
         │                                                                    │
         │ 2 dyn_blocklist[src]  hit and not expired ──────────────► DROP     │
         │   deny_cidr (LPM)     hit ──────────────────────────────► DROP     │
@@ -74,7 +75,7 @@ The datapath never decides policy. Thresholds, backend sets, weights and lists a
 | `lb_tables` | array of maps | controller | per-vip maglev or wrr table |
 | `rr_cursor` | percpu array | datapath | wrr position per vip |
 | `conn_track` | LRU hash | datapath | 5-tuple → backend id |
-| `rate_state` | LRU hash | datapath | per-source syn/udp counters in a 1s window |
+| `rate_state` | LRU hash | datapath | per-source syn/udp token bucket timestamps |
 | `dyn_blocklist` | LRU hash | datapath (+ admin api) | source → expiry, reason |
 | `deny_cidr`, `allow_cidr` | LPM trie | controller | permanent lists |
 | `stats`, `vip_stats`, `backend_stats` | percpu array | datapath | counters |
@@ -99,6 +100,28 @@ config.yaml ──► config.Load (strict parse, validation)
 - If every backend of a VIP fails health checks the table is built from all of them. Dropping everything is worse than trying.
 - A table identical to the one already installed is not rewritten.
 
+## Restarts (pin_path)
+
+With `pin_path: /sys/fs/bpf/xdpshield` every map is pinned there by name and the XDP link is pinned as `xdp_link`. On the next start the loader reuses the pinned maps (conntrack, rate state, blocklist, counters, tables) instead of creating new ones and calls `Update` on the pinned link, which replaces the program atomically (linux 5.9+). When the process exits the datapath keeps forwarding with the last tables.
+
+Ids are the catch: conntrack entries hold backend ids, and ids are handed out by the controller. It writes `state_file` (default `/var/lib/xdpshield/state.json`; bpffs cannot hold regular files, so it does not live next to the pins) after every successful config apply and reads it back before the first apply, so names keep their ids and entries the new config dropped are removed as usual. Health starts out "all up" again.
+
+If a new build changes a map layout the loader refuses the old pins and says to run `xdpshield -unpin` first (that drops conntrack). Changing `interface`, `xdp_mode` or `pin_path` needs `-unpin` too, the pinned link stays on the old interface. An unpinned run behaves as before: exit detaches.
+
+## Prefix list files
+
+`ddos.deny_lists` / `allow_lists` name files with one prefix or bare address per line (`#` and `;` start comments). They are read on every config load, relative to the config file, merged with the inline lists, deduplicated and pushed into the same LPM tries, so a country zone file or a Spamhaus DROP dump is enough for coarse geo or reputation blocking. Each trie holds 16384 prefixes per family and the loader rejects bigger sets. The files are not watched: after refreshing them send `SIGHUP`, or touch the config.
+
+There is deliberately no MaxMind/ASN reader in the daemon; turn the database into prefix files with whatever tool you trust and drop the result in.
+
+## Draining
+
+`drain: true` on a backend removes it from every Maglev/WRR table but leaves it `active` in `backend_map`, so conntrack hits keep going to it. Flows end on their own or age out of the LRU. If every backend of a VIP is drained or down the VIP falls back to using all of them rather than blackholing. After removing the backend from the config, its remaining flows rehash to somewhere else.
+
+## Amplification filter
+
+`ddos.amplification.ports` lists UDP source ports used by reflection attacks. A UDP packet whose source port is in that list, aimed at one of our VIP addresses but matching no VIP (the destination port is a random victim port), is dropped when its UDP length is at least `min_size`. Nothing behind the balancer sent a query, so there is nothing legitimate to lose, unless a backend itself resolves through the VIP address: allowlist those. A VIP that really serves one of the ports (DNS on 53) is untouched because the VIP lookup happens first. Packets for addresses that aren't VIPs go to the host stack as before. Counted as `drop_amplification`.
+
 ## Observability
 
 - `/metrics` (Prometheus): counters are read from the kernel on scrape, there is no polling loop. Drops are one metric with a `reason` label. Per-VIP and per-backend traffic, backend health.
@@ -107,9 +130,11 @@ config.yaml ──► config.Load (strict parse, validation)
 
 ## Limits and known gaps
 
-- IPv4 only.
+- Backends can be IPv4 or IPv6, independent of the VIP family. The outer header follows the backend: IPv4 backends get IPIP (inner v4) or 6in4 (protocol 41, inner v6, decap on `sit0`), IPv6 backends get IPIP6 (next header 4) or IP6IP6 (next header 41), decapsulated on `ip6tnl0`. `encap_src` is needed with any v4 backend, `encap_src6` with any v6 one. The tunnel overhead used for the MTU check is 40 bytes as soon as one backend is v6 (it is checked before a backend is picked), so a pure-v4 setup keeps the 20 byte limit.
+- IPv6 extension headers are not walked. Only the fragment header is recognised (dropped when aimed at a VIP); anything else that isn't TCP or UDP right after the fixed header is passed to the host, including hop-by-hop and routing headers on VIP traffic.
 - No SYN cookies; SYN floods are handled by per-source rate limits, which does nothing against a spoofed-source flood spread over millions of addresses. Pair with upstream scrubbing for volumetric attacks.
-- Rate windows are fixed 1s and roll over without a lock, so counts can be off by a few packets around the boundary.
+- Rate limits are a GCRA token bucket per source (rate = limit, burst = one second of it), kept as one timestamp per protocol. Updates are not locked, so two cpus racing on the same source can admit a few extra packets.
+- A v6 packet that would exceed the MTU after the 20 byte 6in4 wrapper gets ICMPv6 packet too big (type 2, advertised mtu = `mtu - 20`) from the VIP, 110 bytes, built in place and sent with `XDP_TX`.
 - A DF packet that would exceed the MTU after encapsulation gets an ICMP "fragmentation needed" (type 3 code 4, advertised mtu = `mtu - 20`) sent back from the VIP, 70 bytes, built in place and sent with `XDP_TX`. Without DF the packet is dropped. Clamp MSS on the backends anyway.
 - WRR cursors are per CPU, so short runs are only approximately proportional.
 - Single VLAN-untagged Ethernet only; tagged frames are passed to the host.

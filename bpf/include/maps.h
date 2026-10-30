@@ -93,6 +93,66 @@ struct {
     __type(value, struct lpm_val);
 } allow_cidr SEC(".maps");
 
+/* udp source ports that reflection attacks come from, value = smallest l4 length to drop */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, AMP_PORTS_MAX);
+    __type(key, __be16);
+    __type(value, __u16);
+} amp_ports SEC(".maps");
+
+/* ipv6 twins of the maps above. backends, lb tables and stats are shared */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_VIPS);
+    __type(key, struct vip_key6);
+    __type(value, struct vip_val);
+} vip6_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_VIPS);
+    __type(key, struct addr6);
+    __type(value, __u8);
+} vip6_addrs SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, CONNTRACK_MAX);
+    __type(key, struct flow_key6);
+    __type(value, struct flow_val);
+} conn_track6 SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, RATE_STATE_MAX);
+    __type(key, struct addr6);
+    __type(value, struct rate_val);
+} rate_state6 SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, BLOCKLIST_MAX);
+    __type(key, struct addr6);
+    __type(value, struct block_val);
+} dyn_blocklist6 SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __uint(max_entries, CIDR_MAX);
+    __type(key, struct lpm_key6);
+    __type(value, struct lpm_val);
+} deny_cidr6 SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __uint(max_entries, CIDR_MAX);
+    __type(key, struct lpm_key6);
+    __type(value, struct lpm_val);
+} allow_cidr6 SEC(".maps");
+
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, STAT_MAX);

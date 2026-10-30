@@ -1,9 +1,12 @@
 interface: eth0
 xdp_mode: auto            # auto = driver mode if the nic supports it, else generic
 listen: 127.0.0.1:9100    # /metrics, /healthz and the admin api
+pin_path: /sys/fs/bpf/xdpshield   # maps and the xdp link outlive the process; `xdpshield -unpin` removes them
+# state_file: /var/lib/xdpshield/state.json   # default; ids of backends/vips, a normal file because bpffs can't hold one
 admin_token_env: XDPSHIELD_TOKEN   # unset or empty env var = admin writes disabled
 
-encap_src: 10.0.0.1       # this lb's address, used as outer src of the ipip tunnel
+encap_src: 10.0.0.1       # this lb's address, used as outer src of the ipip tunnel (ipv4 backends)
+# encap_src6: 2001:db8:ee::1   # same for ipv6 backends, required as soon as one backend has a v6 address
 mtu: 1500                 # packets that would exceed this after +20 bytes of ipip are dropped
 hash_seed: 24301          # must be identical on every lb node
 
@@ -12,10 +15,18 @@ ddos:
   syn_limit_pps: 200      # per source ip per second, new connections only
   udp_limit_pps: 2000
   block_ttl: 60s
+  amplification:          # drop reflected answers (src port below) that hit a vip address but no vip
+    ports: [53, 123, 161, 389, 1900, 11211]
+    min_size: 100         # udp length incl. header; smaller packets pass
   allow:
     - 10.0.0.0/8          # monitoring, office, upstream health probes
   deny:
     - 192.0.2.0/24
+    - 2001:db8:bad::/48   # v6 prefixes go in the same lists
+  # files with one prefix per line (country zones, spamhaus drop...), merged into
+  # allow/deny on every load; reload with SIGHUP after refreshing them
+  # deny_lists: [lists/cn.zone, lists/drop.txt]
+  # allow_lists: [lists/partners.txt]
 
 health:
   enabled: true
@@ -28,9 +39,10 @@ health:
 backends:
   - {name: web-1, address: 10.0.1.11, mac: "02:42:0a:00:01:0b"}
   - {name: web-2, address: 10.0.1.12, mac: "02:42:0a:00:01:0c"}
-  - {name: web-3, address: 10.0.1.13, mac: "02:42:0a:00:01:0d", health_port: 8080}
+  - {name: web-3, address: 10.0.1.13, mac: "02:42:0a:00:01:0d", health_port: 8080, health_check: http, health_path: /ready}
   - {name: dns-1, address: 10.0.1.21, mac: "02:42:0a:00:01:15"}
-  - {name: dns-2, address: 10.0.1.22, mac: "02:42:0a:00:01:16"}
+  # - {name: web-6, address: "2001:db8:b::7", mac: "02:42:0a:00:01:20"}   # v6 backend, tunnel adds 40 bytes
+  - {name: dns-2, address: 10.0.1.22, mac: "02:42:0a:00:01:16"}   # add drain: true to retire a backend without cutting its flows
 
 vips:
   - name: web-https
@@ -51,3 +63,12 @@ vips:
     backends:
       - {name: dns-1, weight: 3}
       - {name: dns-2, weight: 1}
+
+  # v6 vips tunnel to the same ipv4 backends over 6in4 (backend-setup.sh <vip> <vip6>)
+  - name: web-https-v6
+    address: 2001:db8:100::10
+    port: 443
+    algorithm: maglev
+    backends:
+      - {name: web-1, weight: 100}
+      - {name: web-2, weight: 100}

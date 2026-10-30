@@ -48,6 +48,9 @@ var simple = map[string]string{
 	"allowlisted":  "xdpshield_allowlisted_packets_total",
 	"block_added":  "xdpshield_sources_blocked_total",
 	"event_lost":   "xdpshield_events_lost_total",
+
+	"icmp_frag_needed": "xdpshield_icmp_frag_needed_total",
+	"icmp6_too_big":    "xdpshield_icmp6_too_big_total",
 }
 
 func NewCollector(src Source, topo Topology) *Collector {

@@ -2,6 +2,7 @@
 Description=xdpshield XDP load balancer and DDoS filter
 After=network-online.target
 Wants=network-online.target
+RequiresMountsFor=/sys/fs/bpf
 
 [Service]
 ExecStartPre=/usr/local/bin/xdpshield -check -config /etc/xdpshield/config.yaml
@@ -16,6 +17,8 @@ AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_PERFMON CAP_SYS_RESOURCE
 CapabilityBoundingSet=CAP_BPF CAP_NET_ADMIN CAP_PERFMON CAP_SYS_RESOURCE
 NoNewPrivileges=yes
 ProtectSystem=strict
+ReadWritePaths=/sys/fs/bpf
+StateDirectory=xdpshield
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelModules=yes
