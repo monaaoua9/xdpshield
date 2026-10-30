@@ -130,7 +130,8 @@ There is deliberately no MaxMind/ASN reader in the daemon; turn the database int
 
 - `/metrics` (Prometheus): counters are read from the kernel on scrape, there is no polling loop. Drops are one metric with a `reason` label. Per-VIP and per-backend traffic, backend health.
 - `xdpshield_block_events_total{reason}` and `/api/v1/events` come from the ring buffer. Source IPs are deliberately not metric labels; during an attack that would be unbounded cardinality. They go to the log and the in-memory recent list (last 256).
-- `/api/v1/status`, `/api/v1/blocklist` (GET open, POST/DELETE need the bearer token).
+- `xdpshield_build_info{version}`, `xdpshield_start_time_seconds`, `xdpshield_config_reloads_total{result=ok|error}` and `xdpshield_config_last_success_timestamp_seconds`. Alert on the error counter moving or the timestamp going stale: a rejected reload leaves the old config running, so nothing else would tell you.
+- `/api/v1/status`, `/api/v1/blocklist` (GET open, POST/DELETE need the bearer token), `POST /api/v1/reload` (token) re-reads the config like SIGHUP but answers with the validation error when it is rejected. SIGHUP, the file watcher and the endpoint share one lock, so concurrent reloads are serialized.
 
 ## Limits and known gaps
 

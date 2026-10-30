@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -112,6 +113,7 @@ func run(path string, cfg *config.Config) error {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(metrics.NewCollector(plane, ctl))
 	events := metrics.NewEvents(reg)
+	life := metrics.NewLifecycle(reg, version)
 
 	rd, err := plane.Events()
 	if err != nil {
@@ -124,9 +126,39 @@ func run(path string, cfg *config.Config) error {
 	if cfg.AdminTokenEnv != "" {
 		token = os.Getenv(cfg.AdminTokenEnv)
 	}
+	var mu sync.Mutex // sighup, file watcher and the api can all land together
+	apply := func(why string) error {
+		next, err := config.Load(path)
+		if err != nil {
+			slog.Error("reload rejected, keeping old config", "why", why, "err", err)
+			return err
+		}
+		if next.Interface != cfg.Interface || next.XDPMode != cfg.XDPMode || next.Listen != cfg.Listen || next.PinPath != cfg.PinPath {
+			slog.Warn("interface, xdp_mode, listen and pin_path need a restart, ignoring them")
+		}
+		if err := ctl.Apply(next); err != nil {
+			slog.Error("reload failed", "why", why, "err", err)
+			return err
+		}
+		persist()
+		hc.Update(next)
+		slog.Info("config reloaded", "why", why, "vips", len(next.VIPs), "backends", len(next.Backends))
+		return nil
+	}
+
+	reload := func(why string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		err := apply(why)
+		life.Reloaded(err)
+		return err
+	}
+
+	adm := admin.New(ctl, events, reg, token)
+	adm.Reload = func() error { return reload("admin api") }
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           admin.New(ctl, events, reg, token).Handler(),
+		Handler:           adm.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -137,25 +169,7 @@ func run(path string, cfg *config.Config) error {
 	}()
 	slog.Info("listening", "addr", cfg.Listen, "admin_writes", token != "")
 
-	reload := func(why string) {
-		next, err := config.Load(path)
-		if err != nil {
-			slog.Error("reload rejected, keeping old config", "why", why, "err", err)
-			return
-		}
-		if next.Interface != cfg.Interface || next.XDPMode != cfg.XDPMode || next.Listen != cfg.Listen || next.PinPath != cfg.PinPath {
-			slog.Warn("interface, xdp_mode, listen and pin_path need a restart, ignoring them")
-		}
-		if err := ctl.Apply(next); err != nil {
-			slog.Error("reload failed", "why", why, "err", err)
-			return
-		}
-		persist()
-		hc.Update(next)
-		slog.Info("config reloaded", "why", why, "vips", len(next.VIPs), "backends", len(next.Backends))
-	}
-
-	watch(ctx, path, reload)
+	watch(ctx, path, func(why string) { reload(why) })
 
 	<-ctx.Done()
 	if cfg.PinPath != "" {

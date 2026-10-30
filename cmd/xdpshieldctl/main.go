@@ -22,6 +22,7 @@ const usage = `usage: xdpshieldctl [-addr url] [-token t] <command>
   blocked                 current dynamic blocklist
   block <ip> [ttl]        block a source (needs token), ttl like 10m
   unblock <ip>            (needs token)
+  reload                  re-read the config now (needs token), prints why if rejected
   events [n]              recent block events, newest first
   stats                   datapath counters from /metrics
   top [seconds]           live rates, refreshed until ctrl-c
@@ -125,6 +126,11 @@ func run(args []string, out, errw io.Writer) int {
 		_, err = c.do("DELETE", "/api/v1/blocklist/"+url.PathEscape(rest[0]), nil)
 		if err == nil {
 			fmt.Fprintln(out, "unblocked", rest[0])
+		}
+	case "reload":
+		_, err = c.do("POST", "/api/v1/reload", nil)
+		if err == nil {
+			fmt.Fprintln(out, "config reloaded")
 		}
 	case "events":
 		n := 20

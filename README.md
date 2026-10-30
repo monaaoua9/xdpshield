@@ -66,10 +66,12 @@ curl localhost:9100/metrics | grep xdpshield_
 curl localhost:9100/api/v1/status
 curl -H "Authorization: Bearer $XDPSHIELD_TOKEN" -d '{"ip":"203.0.113.77","ttl":"1h"}' localhost:9100/api/v1/blocklist
 kill -HUP $(pidof xdpshield)     # or just edit the file
+curl -X POST -H "Authorization: Bearer $XDPSHIELD_TOKEN" localhost:9100/api/v1/reload   # same, but tells you if the config was rejected
 
 bin/xdpshieldctl status          # vips, backends, health
 bin/xdpshieldctl blocked
 bin/xdpshieldctl block 203.0.113.77 1h    # token from $XDPSHIELD_TOKEN or -token
+bin/xdpshieldctl reload                   # POST /api/v1/reload, prints the validation error on failure
 bin/xdpshieldctl events 20
 bin/xdpshieldctl stats
 bin/xdpshieldctl top                      # live pps, drops by reason, backend health

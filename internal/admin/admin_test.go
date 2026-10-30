@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -84,5 +85,29 @@ func TestMutationsDisabledWithoutToken(t *testing.T) {
 	}
 	if w := do(h, "GET", "/healthz", "", ""); w.Code != 200 {
 		t.Fatalf("healthz %d", w.Code)
+	}
+}
+
+func TestReload(t *testing.T) {
+	s := New(&fakeCtl{blocked: map[netip.Addr]bool{}}, noEvents{}, prometheus.NewRegistry(), "s3cret")
+	h := s.Handler()
+
+	if w := do(h, "POST", "/api/v1/reload", "", ""); w.Code != 401 {
+		t.Fatalf("no token: %d", w.Code)
+	}
+	if w := do(h, "POST", "/api/v1/reload", "", "Bearer s3cret"); w.Code != 501 {
+		t.Fatalf("unwired: %d", w.Code)
+	}
+
+	calls := 0
+	s.Reload = func() error { calls++; return nil }
+	if w := do(h, "POST", "/api/v1/reload", "", "Bearer s3cret"); w.Code != 200 || calls != 1 {
+		t.Fatalf("ok path: %d, calls %d", w.Code, calls)
+	}
+
+	s.Reload = func() error { return errors.New("vips[0]: bad port") }
+	w := do(h, "POST", "/api/v1/reload", "", "Bearer s3cret")
+	if w.Code != 422 || !strings.Contains(w.Body.String(), "bad port") {
+		t.Fatalf("rejected: %d %s", w.Code, w.Body)
 	}
 }
