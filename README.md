@@ -12,7 +12,7 @@ client ─► NIC ─► [ XDP: validate ─► blocklist ─► rate limit ─�
 
 - **Dual stack**: IPv4 and IPv6 VIPs, blocklists and CIDR lists. IPv6 clients are carried to the (IPv4) backends in 6in4 and get ICMPv6 packet too big when they overshoot the MTU.
 - **Load balancing in the kernel**: Maglev consistent hashing or smooth weighted round robin per VIP, LRU connection tracking so established flows survive backend changes, DSR so responses bypass the balancer.
-- **DDoS**: malformed and martian packets, invalid TCP flag combinations, fragments to VIPs, reflected UDP answers (DNS, NTP, memcached...) aimed at a VIP address, per-source SYN and UDP rate limits with automatic TTL blocklisting, permanent allow/deny CIDRs. The packet that trips a limit creates the block; the controller is informed asynchronously.
+- **DDoS**: malformed and martian packets, invalid TCP flag combinations, fragments to VIPs, reflected UDP answers (DNS, NTP, memcached...) aimed at a VIP address, per-source SYN and UDP token-bucket rate limits with automatic TTL blocklisting, permanent allow/deny CIDRs. The packet that trips a limit creates the block; the controller is informed asynchronously.
 - **Live control**: YAML config, applied on file change or `SIGHUP`, diffed into map writes. VIP tables are swapped atomically via array-of-maps. Rejected configs leave the running state alone.
 - **Health checks**: TCP or HTTP (`health_check: http`, 2xx/3xx on `health_path`) probes with fall/rise thresholds; unhealthy backends leave the table without touching other flows, and `drain: true` stops new flows to a backend while tracked ones finish.
 - **Observability**: Prometheus counters read from per-CPU maps on scrape, ring buffer for block events, small admin API.
