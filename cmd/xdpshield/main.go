@@ -57,6 +57,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "unpin:", err)
 			os.Exit(1)
 		}
+		os.Remove(cfg.StateFile) // ids of maps that no longer exist are worthless
 		fmt.Println("detached and removed", cfg.PinPath)
 		return
 	}
@@ -80,7 +81,7 @@ func run(path string, cfg *config.Config) error {
 
 	ctl := controller.New(plane)
 	if cfg.PinPath != "" {
-		st, err := controller.LoadState(controller.StatePath(cfg.PinPath))
+		st, err := controller.LoadState(cfg.StateFile)
 		if err != nil {
 			return fmt.Errorf("read saved state: %w", err)
 		}
@@ -91,7 +92,7 @@ func run(path string, cfg *config.Config) error {
 		if cfg.PinPath == "" {
 			return
 		}
-		if err := controller.SaveState(controller.StatePath(cfg.PinPath), ctl.State()); err != nil {
+		if err := controller.SaveState(cfg.StateFile, ctl.State()); err != nil {
 			slog.Error("save state", "err", err)
 		}
 	}

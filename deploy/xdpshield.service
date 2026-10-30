@@ -18,6 +18,7 @@ CapabilityBoundingSet=CAP_BPF CAP_NET_ADMIN CAP_PERFMON CAP_SYS_RESOURCE
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/sys/fs/bpf
+StateDirectory=xdpshield
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelModules=yes

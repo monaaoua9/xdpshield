@@ -25,6 +25,9 @@ type Config struct {
 	Listen    string `yaml:"listen"`
 	// directory on bpffs; set it and maps, conntrack and the xdp link survive a restart
 	PinPath string `yaml:"pin_path"`
+	// where controller ids are kept for the next start; bpffs only holds bpf objects, so this
+	// is a normal file. defaults to /var/lib/xdpshield/state.json when pin_path is set
+	StateFile string `yaml:"state_file"`
 	// name of the env var holding the admin bearer token, empty = mutating admin routes disabled
 	AdminTokenEnv string `yaml:"admin_token_env"`
 
@@ -130,6 +133,9 @@ func (c *Config) defaults() {
 	if c.XDPMode == "" {
 		c.XDPMode = "auto"
 	}
+	if c.PinPath != "" && c.StateFile == "" {
+		c.StateFile = "/var/lib/xdpshield/state.json"
+	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:9100"
 	}
@@ -193,6 +199,9 @@ func (c *Config) Validate() error {
 	}
 	if c.PinPath != "" && !filepath.IsAbs(c.PinPath) {
 		return fmt.Errorf("pin_path must be an absolute path")
+	}
+	if c.StateFile != "" && !filepath.IsAbs(c.StateFile) {
+		return fmt.Errorf("state_file must be an absolute path")
 	}
 	switch c.XDPMode {
 	case "auto", "native", "generic":

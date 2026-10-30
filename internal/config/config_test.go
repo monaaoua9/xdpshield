@@ -130,3 +130,17 @@ func TestExampleConfigIsValid(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStateFileDefaultsWithPinPath(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil || c.StateFile != "" {
+		t.Fatalf("no pin_path should leave it empty: %q %v", c.StateFile, err)
+	}
+	c, err = Parse([]byte("pin_path: /sys/fs/bpf/x\n" + good))
+	if err != nil || c.StateFile != "/var/lib/xdpshield/state.json" {
+		t.Fatalf("got %q %v", c.StateFile, err)
+	}
+	if _, err := Parse([]byte("pin_path: /sys/fs/bpf/x\nstate_file: rel.json\n" + good)); err == nil {
+		t.Fatal("relative state_file accepted")
+	}
+}
