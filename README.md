@@ -71,6 +71,7 @@ bin/xdpshieldctl blocked
 bin/xdpshieldctl block 203.0.113.77 1h    # token from $XDPSHIELD_TOKEN or -token
 bin/xdpshieldctl events 20
 bin/xdpshieldctl stats
+bin/xdpshieldctl top                      # live pps, drops by reason, backend health
 ```
 
 ## Tests
