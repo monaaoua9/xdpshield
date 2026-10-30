@@ -96,18 +96,18 @@ Program cost only, measured with `BPF_PROG_TEST_RUN` (3M runs per case, kernel-s
 
 | path | ns/pkt | Mpps/core |
 |---|---|---|
-| non-IP, passed to the stack | 72 | 13.9 |
-| host traffic (not a VIP), passed | 169 | 5.9 |
-| dropped by deny CIDR (LPM) | 135 | 7.4 |
-| dropped by dynamic blocklist | 121 | 8.3 |
-| dropped, bad TCP flags | 169 | 5.9 |
-| LB, established TCP flow (conntrack hit, ipip encap) | 135 | 7.4 |
-| LB, TCP SYN (rate check, hash, encap) | 130 | 7.7 |
-| LB, UDP weighted round robin | 131 | 7.6 |
-| IPv6 LB, established TCP flow (6in4 encap) | 267 | 3.7 |
-| IPv6 LB, TCP SYN | 148 | 6.8 |
+| non-IP, passed to the stack | 50 | 20.0 |
+| host traffic (not a VIP), passed | 132 | 7.6 |
+| dropped by deny CIDR (LPM) | 92 | 10.9 |
+| dropped by dynamic blocklist | ~100 (unstable, see doc) | ~10 |
+| dropped, bad TCP flags | 225 | 4.4 |
+| LB, established TCP flow (conntrack hit, ipip encap) | 93 | 10.8 |
+| LB, TCP SYN (rate check, hash, encap) | 79 | 12.7 |
+| LB, UDP weighted round robin | 76 | 13.2 |
+| IPv6 LB, established TCP flow (6in4 encap) | 77 | 13.0 |
+| IPv6 LB, TCP SYN | 78 | 12.8 |
 
-These are ceilings for the program on a slow laptop core, not NIC throughput: a real run adds driver and memory costs, and native XDP on a 10G NIC was not tried. For scale, a blocklisted source costs about 120 ns per packet before the kernel allocates anything.
+These are ceilings for the program on a slow laptop core, not NIC throughput: a real run adds driver and memory costs, and native XDP on a 10G NIC was not tried. For scale, a blocklisted source costs about 100 ns at best per packet before the kernel allocates anything.
 
 ## Status
 

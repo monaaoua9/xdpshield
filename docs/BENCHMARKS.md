@@ -1,6 +1,6 @@
 # xdpshield: benchmarks
 
-Measured 2026-10-30, after the IPv6 and token bucket work.
+Measured 2026-10-30, after the IPv6, token bucket and clock-read changes (six repetitions, the first table of this day was three).
 
 | | |
 |---|---|
@@ -22,26 +22,25 @@ GOOS=linux GOARCH=amd64 go test -c -tags integration -o xdp.test ./internal/data
 
 | path | ns/pkt | Mpps/core |
 |---|---:|---:|
-| non-IP, passed to the stack | 72 (72 – 76) | 13.9 |
-| host traffic (not a VIP), passed | 169 (166 – 209) | 5.9 |
-| dropped by deny CIDR (LPM) | 135 (127 – 163) | 7.4 |
-| dropped by dynamic blocklist | 121 (117 – 122) | 8.3 |
-| dropped, bad TCP flags | 169 (166 – 197) | 5.9 |
-| LB, established TCP flow (conntrack hit, IPIP encap) | 135 (135 – 148) | 7.4 |
-| LB, TCP SYN (rate check, hash, encap) | 130 (126 – 132) | 7.7 |
-| LB, UDP weighted round robin | 131 (124 – 135) | 7.6 |
-| LB, allowlisted source | 141 (129 – 144) | 7.1 |
-| IPv6, dropped by deny CIDR | 185 (138 – 247) | 5.4 |
-| IPv6 LB, established TCP flow (6in4 encap) | 267 (243 – 338) | 3.7 |
-| IPv6 LB, TCP SYN | 148 (148 – 213) | 6.8 |
+| non-IP, passed to the stack | 50 (42 – 66) | 20.0 |
+| host traffic (not a VIP), passed | 132 (113 – 148) | 7.6 |
+| dropped by deny CIDR (LPM) | 92 (88 – 113) | 10.9 |
+| dropped by dynamic blocklist | 101 best of 6 (101 – 608) | ~10 |
+| dropped, bad TCP flags | 225 (158 – 616) | 4.4 |
+| LB, established TCP flow (conntrack hit, IPIP encap) | 93 (81 – 113) | 10.8 |
+| LB, TCP SYN (rate check, hash, encap) | 79 (74 – 91) | 12.7 |
+| LB, UDP weighted round robin | 76 (73 – 85) | 13.2 |
+| LB, allowlisted source | 76 (73 – 82) | 13.2 |
+| IPv6, dropped by deny CIDR | 82 (77 – 88) | 12.2 |
+| IPv6 LB, established TCP flow (6in4 encap) | 77 (76 – 79) | 13.0 |
+| IPv6 LB, TCP SYN | 78 (75 – 86) | 12.8 |
 
 ## Reading these numbers
 
-- A blocklisted source costs about 90 ns before the kernel allocates anything. The drop paths are the cheap ones, which is the point of doing them in XDP.
-- The load-balancing paths (header rewrite, checksum, IPIP encapsulation) cost roughly 20–50 ns more than the cheapest drop.
-- The "bad TCP flags" drop is the slowest case here (about 170 ns), slower than the LB paths even though it does less. I haven't looked into why.
-- The IPv6 rows are noisier than the v4 ones (the established flow ranges 243 – 338 ns) and I only ran three repetitions, so treat them as a rough range. The established v6 flow is the slowest path here, which is plausible given the 16-byte keys and the larger outer header, but I haven't profiled it.
-- Compared with the previous run, the LB paths are about the same (established flow 135 ns against 138) but the drop and pass paths moved up (host traffic 169 against 123, deny CIDR 135 against 106). The program changed in between (dual stack, token bucket), but the core's clock also moves between days, so use ratios between rows, not absolute values across days.
+- The WSL2 core alternates between a fast and a roughly 6x slower phase between runs. This table was taken in a fast phase; an earlier run the same day gave 130-250 ns for the same paths. Compare rows within one table, not across tables.
+- The two drop rows that read a map entry written by userspace (dynamic blocklist) and the bad-flags row are the noisy ones: six runs spread from 101 to 608 ns and 158 to 616 ns. I report the best run for the blocklist and the median for bad flags, and I don't know why they vary more than the LB paths.
+- Against the pre-change build in the same session, the LB, drop and IPv6 paths were 15-30% faster (one clock read per packet instead of two, trie lookups skipped while the list is empty). Non-IP and bad-flags did not change.
+- IPv6 paths now cost about the same as IPv4 ones here; the earlier gap in the first table was the slow phase, not the program.
 
 ## What has not been measured
 
