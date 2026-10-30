@@ -107,9 +107,11 @@ config.yaml ──► config.Load (strict parse, validation)
 
 ## Limits and known gaps
 
-- IPv4 only.
+- IPv6 VIPs work, but backends must be IPv4: a v6 client packet is wrapped in an IPv4 header with protocol 41 (6in4) and unwrapped on the backend's `sit0`. There is no ip6ip6 path.
+- IPv6 extension headers are not walked. Only the fragment header is recognised (dropped when aimed at a VIP); anything else that isn't TCP or UDP right after the fixed header is passed to the host, including hop-by-hop and routing headers on VIP traffic.
 - No SYN cookies; SYN floods are handled by per-source rate limits, which does nothing against a spoofed-source flood spread over millions of addresses. Pair with upstream scrubbing for volumetric attacks.
 - Rate windows are fixed 1s and roll over without a lock, so counts can be off by a few packets around the boundary.
+- A v6 packet that would exceed the MTU after the 20 byte 6in4 wrapper gets ICMPv6 packet too big (type 2, advertised mtu = `mtu - 20`) from the VIP, 110 bytes, built in place and sent with `XDP_TX`.
 - A DF packet that would exceed the MTU after encapsulation gets an ICMP "fragmentation needed" (type 3 code 4, advertised mtu = `mtu - 20`) sent back from the VIP, 70 bytes, built in place and sent with `XDP_TX`. Without DF the packet is dropped. Clamp MSS on the backends anyway.
 - WRR cursors are per CPU, so short runs are only approximately proportional.
 - Single VLAN-untagged Ethernet only; tagged frames are passed to the host.
