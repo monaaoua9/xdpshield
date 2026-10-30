@@ -8,6 +8,7 @@ all: build
 
 build:
 	CGO_ENABLED=0 go build $(GOFLAGS) -o $(BIN) ./cmd/xdpshield
+	CGO_ENABLED=0 go build $(GOFLAGS) -o bin/xdpshieldctl ./cmd/xdpshieldctl
 
 # needs clang + llvm-strip + libbpf headers (apt install clang llvm libbpf-dev linux-libc-dev)
 generate:
