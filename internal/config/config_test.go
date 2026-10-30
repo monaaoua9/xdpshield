@@ -41,14 +41,15 @@ func TestParseDefaults(t *testing.T) {
 
 func TestParseRejects(t *testing.T) {
 	cases := map[string]string{
-		"unknown field":   good + "\nbogus: 1\n",
-		"unknown backend": strings.Replace(good, "{name: b}", "{name: nope}", 1),
-		"bad mac":         strings.Replace(good, "02:00:00:00:00:02", "zz", 1),
-		"ipv6 backend":    strings.Replace(good, "10.0.1.2", "2001:db8::2", 1),
-		"mapped vip":      strings.Replace(good, "203.0.113.10", "::ffff:203.0.113.10", 1),
-		"dup backend ip":  strings.Replace(good, "10.0.1.2", "10.0.1.1", 1),
-		"no iface":        strings.Replace(good, "interface: eth0", "", 1),
-		"bad algo":        strings.Replace(good, "port: 443", "port: 443\n    algorithm: random", 1),
+		"unknown field":             good + "\nbogus: 1\n",
+		"unknown backend":           strings.Replace(good, "{name: b}", "{name: nope}", 1),
+		"bad mac":                   strings.Replace(good, "02:00:00:00:00:02", "zz", 1),
+		"v6 backend, no encap_src6": strings.Replace(good, "10.0.1.2", "2001:db8::2", 1),
+		"encap_src6 is v4":          strings.Replace(good, "encap_src: 10.0.0.1", "encap_src: 10.0.0.1\nencap_src6: 10.0.0.9", 1),
+		"mapped vip":                strings.Replace(good, "203.0.113.10", "::ffff:203.0.113.10", 1),
+		"dup backend ip":            strings.Replace(good, "10.0.1.2", "10.0.1.1", 1),
+		"no iface":                  strings.Replace(good, "interface: eth0", "", 1),
+		"bad algo":                  strings.Replace(good, "port: 443", "port: 443\n    algorithm: random", 1),
 	}
 	for name, raw := range cases {
 		if _, err := Parse([]byte(raw)); err == nil {
@@ -102,6 +103,25 @@ func TestHealthCheckKinds(t *testing.T) {
 		if _, err := Parse([]byte(strings.Replace(good, `address: 10.0.1.1,`, `address: 10.0.1.1, `+bad, 1))); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+func TestIPv6Backend(t *testing.T) {
+	raw := strings.Replace(good, "10.0.1.2", "2001:db8::2", 1)
+	raw = strings.Replace(raw, "encap_src: 10.0.0.1", "encap_src: 10.0.0.1\nencap_src6: 2001:db8::1", 1)
+	c, err := Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Backends[1].Address.Is6() || !c.EncapSrc6.Is6() {
+		t.Fatalf("got %+v", c.Backends[1])
+	}
+
+	// all-v6 deployment doesn't need an ipv4 encap_src
+	only6 := strings.Replace(raw, "encap_src: 10.0.0.1\n", "", 1)
+	only6 = strings.Replace(only6, "10.0.1.1", "2001:db8::3", 1)
+	if _, err := Parse([]byte(only6)); err != nil {
+		t.Fatal(err)
 	}
 }
 

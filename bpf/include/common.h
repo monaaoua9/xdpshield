@@ -69,6 +69,10 @@ enum stat_id {
     STAT_MAX,
 };
 
+struct addr6 {
+    __u8 b[16];
+};
+
 struct global_cfg {
     __u32 flags;
     __u32 syn_limit_pps;    /* per source, per 1s window */
@@ -77,7 +81,8 @@ struct global_cfg {
     __be32 encap_src;       /* outer src for ipip */
     __u32 max_ip_len;       /* largest inner tot_len we encapsulate */
     __u32 hash_seed;        /* same on every lb node or maglev stops being consistent */
-    __u32 pad;
+    __u32 overhead;         /* bytes the tunnel adds: 20 for ipv4 backends, 40 if any backend is ipv6 */
+    struct addr6 encap_src6;/* outer src towards ipv6 backends */
 };
 
 struct vip_key {
@@ -95,10 +100,11 @@ struct vip_val {
 };
 
 struct backend {
-    __be32 addr;
+    __be32 addr;            /* family 4 */
     __u8 mac[ETH_ALEN];
     __u8 active;
-    __u8 pad;
+    __u8 family;            /* 4 or 6, 0 counts as 4 */
+    struct addr6 addr6;     /* family 6 */
 };
 
 struct flow_key {
@@ -130,10 +136,6 @@ struct block_val {
 struct lpm_key {
     __u32 prefixlen;
     __be32 addr;
-};
-
-struct addr6 {
-    __u8 b[16];
 };
 
 struct vip_key6 {

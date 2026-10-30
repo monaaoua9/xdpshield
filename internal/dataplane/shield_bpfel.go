@@ -23,7 +23,8 @@ type ShieldBackend struct {
 	Addr   uint32
 	Mac    [6]uint8
 	Active uint8
-	Pad    uint8
+	Family uint8
+	Addr6  ShieldAddr6
 }
 
 type ShieldBlockEvent struct {
@@ -80,7 +81,8 @@ type ShieldGlobalCfg struct {
 	EncapSrc    uint32
 	MaxIpLen    uint32
 	HashSeed    uint32
-	Pad         uint32
+	Overhead    uint32
+	EncapSrc6   ShieldAddr6
 }
 
 type ShieldLpmKey struct {

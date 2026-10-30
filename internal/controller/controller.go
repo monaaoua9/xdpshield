@@ -26,7 +26,9 @@ type Global struct {
 	SynLimitPPS uint32
 	UDPLimitPPS uint32
 	BlockTTL    time.Duration
-	EncapSrc    netip.Addr
+	EncapSrc    netip.Addr // outer src towards ipv4 backends, may be unset
+	EncapSrc6   netip.Addr // same for ipv6 backends
+	Overhead    int        // bytes the tunnel adds, 40 as soon as one backend is ipv6
 	MTU         int
 	HashSeed    uint32
 }
@@ -122,8 +124,15 @@ func (c *Controller) reconcile() error {
 		UDPLimitPPS: cfg.DDoS.UDPLimitPPS,
 		BlockTTL:    cfg.DDoS.BlockTTL,
 		EncapSrc:    cfg.EncapSrc,
+		EncapSrc6:   cfg.EncapSrc6,
+		Overhead:    20,
 		MTU:         cfg.MTU,
 		HashSeed:    cfg.HashSeed,
+	}
+	for _, b := range cfg.Backends {
+		if b.Address.Is6() {
+			g.Overhead = 40
+		}
 	}
 	if err := c.dp.SetGlobal(g); err != nil {
 		return fmt.Errorf("global config: %w", err)

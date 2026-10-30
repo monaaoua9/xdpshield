@@ -49,15 +49,27 @@ func (p *Plane) SetGlobal(g controller.Global) error {
 		SynLimitPps: g.SynLimitPPS,
 		UdpLimitPps: g.UDPLimitPPS,
 		BlockTtlSec: uint32(g.BlockTTL / time.Second),
-		EncapSrc:    addr32(g.EncapSrc),
 		MaxIpLen:    uint32(g.MTU),
 		HashSeed:    g.HashSeed,
+		Overhead:    uint32(g.Overhead),
+	}
+	if g.EncapSrc.IsValid() {
+		v.EncapSrc = addr32(g.EncapSrc)
+	}
+	if g.EncapSrc6.IsValid() {
+		v.EncapSrc6 = addr6(g.EncapSrc6)
 	}
 	return p.objs.ConfigMap.Put(uint32(0), &v)
 }
 
 func (p *Plane) SetBackend(id uint32, ip netip.Addr, mac [6]byte, active bool) error {
-	b := ShieldBackend{Addr: addr32(ip), Mac: mac}
+	b := ShieldBackend{Mac: mac, Family: 4}
+	if ip.Is6() {
+		b.Family = 6
+		b.Addr6 = addr6(ip)
+	} else {
+		b.Addr = addr32(ip)
+	}
 	if active {
 		b.Active = 1
 	}

@@ -242,6 +242,53 @@ static __always_inline int encap_ipip(struct xdp_md *ctx, const struct backend *
 }
 
 /*
+ * outer ipv6 for backends that live on v6: ipip6 (inner v4, next = 4) or
+ * ip6ip6 (inner v6, next = 41). caller reads inner length and traffic class
+ * first, the packet pointers don't survive adjust_head.
+ */
+static __always_inline int encap_outer6(struct xdp_md *ctx, const struct backend *be,
+                                        const struct global_cfg *cfg, __u8 next,
+                                        __u16 inner_len, __u8 tc)
+{
+    __u8 our_mac[ETH_ALEN];
+    struct ethhdr *eth;
+    struct ipv6hdr *outer;
+    void *data = (void *)(long)ctx->data;
+    void *end = (void *)(long)ctx->data_end;
+
+    eth = data;
+    if ((void *)(eth + 1) > end)
+        return -1;
+    __builtin_memcpy(our_mac, eth->h_dest, ETH_ALEN);
+
+    if (bpf_xdp_adjust_head(ctx, 0 - (int)sizeof(struct ipv6hdr)))
+        return -1;
+
+    data = (void *)(long)ctx->data;
+    end = (void *)(long)ctx->data_end;
+    eth = data;
+    outer = (void *)(eth + 1);
+    if ((void *)(outer + 1) > end)
+        return -1;
+
+    __builtin_memcpy(eth->h_dest, be->mac, ETH_ALEN);
+    __builtin_memcpy(eth->h_source, our_mac, ETH_ALEN);
+    eth->h_proto = bpf_htons(ETH_P_IPV6);
+
+    outer->version = 6;
+    outer->priority = tc >> 4;
+    outer->flow_lbl[0] = (tc & 0xf) << 4;
+    outer->flow_lbl[1] = 0;
+    outer->flow_lbl[2] = 0;
+    outer->payload_len = bpf_htons(inner_len);
+    outer->nexthdr = next;
+    outer->hop_limit = 64;
+    __builtin_memcpy(&outer->saddr, &cfg->encap_src6, sizeof(outer->saddr));
+    __builtin_memcpy(&outer->daddr, &be->addr6, sizeof(outer->daddr));
+    return 0;
+}
+
+/*
  * Client sent a DF packet that won't fit once we add 20 bytes. Turn the frame
  * into an icmp "fragmentation needed" back to the sender (from the vip) so path
  * mtu discovery works, then the caller returns XDP_TX. Reply is 70 bytes, never
@@ -285,7 +332,7 @@ static __always_inline int icmp_frag_needed(struct xdp_md *ctx, const struct glo
     ic->code = 4;
     ic->check = 0;
     ic->unused = 0;
-    ic->mtu = bpf_htons(cfg->max_ip_len - sizeof(struct iphdr));
+    ic->mtu = bpf_htons(cfg->max_ip_len - cfg->overhead);
     w = (__u16 *)ic;
 #pragma unroll
     for (int i = 0; i < 18; i++)
@@ -354,7 +401,7 @@ static __always_inline int icmp6_too_big(struct xdp_md *ctx, const struct global
     ic->type = 2;
     ic->code = 0;
     ic->check = 0;
-    ic->mtu = bpf_htonl(cfg->max_ip_len - sizeof(struct iphdr));
+    ic->mtu = bpf_htonl(cfg->max_ip_len - cfg->overhead);
 
     ip6->version = 6;
     ip6->priority = 0;
@@ -507,7 +554,7 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
     struct block_val *bv;
     __u32 w[4], plen, bid, pps;
     __u64 now;
-    int bad_flags;
+    int bad_flags, rc;
 
     p.data = (void *)(long)ctx->data;
     p.end = (void *)(long)ctx->data_end;
@@ -592,8 +639,8 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
         stat_add(STAT_ALLOWLISTED, 1);
     }
 
-    /* 40 byte header + payload, plus the 20 bytes of outer ipv4 we are about to add */
-    if (sizeof(struct ipv6hdr) + plen + sizeof(struct iphdr) > cfg->max_ip_len) {
+    /* 40 byte header + payload, plus whatever the tunnel adds */
+    if (sizeof(struct ipv6hdr) + plen + cfg->overhead > cfg->max_ip_len) {
         stat_add(STAT_DROP_MTU, 1);
         if (icmp6_too_big(ctx, cfg) == 0) {
             stat_add(STAT_ICMP6_TOO_BIG, 1);
@@ -627,7 +674,12 @@ static __always_inline int handle_v6(struct xdp_md *ctx, const struct global_cfg
     traffic_add(&backend_stats, bid, frame_len);
     traffic_add(&vip_stats, vip->id, frame_len);
 
-    if (encap_6in4(ctx, be, cfg) < 0)
+    if (be->family == 6)
+        rc = encap_outer6(ctx, be, cfg, IPPROTO_6IN4, sizeof(struct ipv6hdr) + plen,
+                          (ip6->priority << 4) | (ip6->flow_lbl[0] >> 4));
+    else
+        rc = encap_6in4(ctx, be, cfg);
+    if (rc < 0)
         return drop(STAT_DROP_ENCAP);
 
     stat_add(STAT_LB_FWD, 1);
@@ -742,7 +794,7 @@ int xdp_shield(struct xdp_md *ctx)
         stat_add(STAT_ALLOWLISTED, 1);
     }
 
-    if (bpf_ntohs(p.ip->tot_len) + sizeof(struct iphdr) > cfg->max_ip_len) {
+    if (bpf_ntohs(p.ip->tot_len) + cfg->overhead > cfg->max_ip_len) {
         stat_add(STAT_DROP_MTU, 1);
         if ((p.ip->frag_off & bpf_htons(0x4000)) && icmp_frag_needed(ctx, cfg) == 0) {
             stat_add(STAT_ICMP_FRAG_NEEDED, 1);
@@ -767,7 +819,11 @@ int xdp_shield(struct xdp_md *ctx)
     traffic_add(&backend_stats, bid, frame_len);
     traffic_add(&vip_stats, vip->id, frame_len);
 
-    if (encap_ipip(ctx, be, cfg) < 0)
+    if (be->family == 6)
+        rc = encap_outer6(ctx, be, cfg, IPPROTO_IPIP_N, bpf_ntohs(p.ip->tot_len), p.ip->tos);
+    else
+        rc = encap_ipip(ctx, be, cfg);
+    if (rc < 0)
         return drop(STAT_DROP_ENCAP);
 
     stat_add(STAT_LB_FWD, 1);

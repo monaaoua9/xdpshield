@@ -28,9 +28,10 @@ type Config struct {
 	// name of the env var holding the admin bearer token, empty = mutating admin routes disabled
 	AdminTokenEnv string `yaml:"admin_token_env"`
 
-	EncapSrc netip.Addr `yaml:"encap_src"`
-	MTU      int        `yaml:"mtu"`
-	HashSeed uint32     `yaml:"hash_seed"`
+	EncapSrc  netip.Addr `yaml:"encap_src"`  // needed with ipv4 backends
+	EncapSrc6 netip.Addr `yaml:"encap_src6"` // needed with ipv6 backends
+	MTU       int        `yaml:"mtu"`
+	HashSeed  uint32     `yaml:"hash_seed"`
 
 	DDoS     DDoS      `yaml:"ddos"`
 	Health   Health    `yaml:"health"`
@@ -198,8 +199,22 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("xdp_mode %q: want auto, native or generic", c.XDPMode)
 	}
-	if !c.EncapSrc.Is4() {
+	if c.EncapSrc.IsValid() && !c.EncapSrc.Is4() {
 		return fmt.Errorf("encap_src must be an ipv4 address")
+	}
+	if c.EncapSrc6.IsValid() && (!c.EncapSrc6.Is6() || c.EncapSrc6.Is4In6()) {
+		return fmt.Errorf("encap_src6 must be an ipv6 address")
+	}
+	var have4, have6 bool
+	for _, b := range c.Backends {
+		have4 = have4 || b.Address.Is4()
+		have6 = have6 || b.Address.Is6()
+	}
+	if (have4 || len(c.Backends) == 0) && !c.EncapSrc.IsValid() {
+		return fmt.Errorf("encap_src is required (ipv4 backends tunnel from it)")
+	}
+	if have6 && !c.EncapSrc6.IsValid() {
+		return fmt.Errorf("encap_src6 is required when a backend has an ipv6 address")
 	}
 	if c.MTU < 576 || c.MTU > 9216 {
 		return fmt.Errorf("mtu %d out of range", c.MTU)
@@ -245,9 +260,8 @@ func (c *Config) Validate() error {
 		if _, dup := bes[b.Name]; dup {
 			return fmt.Errorf("duplicate backend %q", b.Name)
 		}
-		if !b.Address.Is4() {
-			// v6 clients reach v4 backends over 6in4, there is no ip6ip6 path yet
-			return fmt.Errorf("backend %s: address must be ipv4", b.Name)
+		if !b.Address.IsValid() || b.Address.Is4In6() || b.Address.Zone() != "" {
+			return fmt.Errorf("backend %s: address must be plain ipv4 or ipv6", b.Name)
 		}
 		if other, dup := addrs[b.Address]; dup {
 			return fmt.Errorf("backend %s and %s share address %s", b.Name, other, b.Address)
