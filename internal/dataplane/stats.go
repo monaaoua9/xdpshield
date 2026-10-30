@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/cilium/ebpf/ringbuf"
@@ -66,6 +67,11 @@ func (p *Plane) TrackedFlows() (n int) {
 	for it.Next(&k, &v) {
 		n++
 	}
+	var k6 ShieldFlowKey6
+	it = p.objs.ConnTrack6.Iterate()
+	for it.Next(&k6, &v) {
+		n++
+	}
 	return
 }
 
@@ -100,9 +106,13 @@ func (r *EventReader) Next() (BlockEvent, error) {
 		if err := binary.Read(bytes.NewReader(rec.RawSample), binary.NativeEndian, &raw); err != nil {
 			continue // short sample, skip it
 		}
+		src := fromAddr32(raw.Src)
+		if raw.Family == 6 {
+			src = netip.AddrFrom16(raw.Src6.B)
+		}
 		return BlockEvent{
 			At:     r.boot.Add(time.Duration(raw.TsNs)),
-			Src:    fromAddr32(raw.Src).String(),
+			Src:    src.String(),
 			Reason: statdef.ReasonName(raw.Reason),
 			PPS:    raw.ObservedPps,
 		}, nil

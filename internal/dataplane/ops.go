@@ -29,6 +29,10 @@ func fromAddr32(v uint32) netip.Addr {
 	return netip.AddrFrom4(b)
 }
 
+func addr6(a netip.Addr) ShieldAddr6 {
+	return ShieldAddr6{B: a.As16()}
+}
+
 func port16(p uint16) uint16 {
 	var b [2]byte
 	binary.BigEndian.PutUint16(b[:], p)
@@ -73,6 +77,11 @@ func vipKey(k controller.VIPKey) ShieldVipKey {
 	return ShieldVipKey{Addr: addr32(k.Addr), Port: port16(k.Port), Proto: proto}
 }
 
+func vipKey6(k controller.VIPKey) ShieldVipKey6 {
+	v := vipKey(controller.VIPKey{Port: k.Port, UDP: k.UDP})
+	return ShieldVipKey6{Addr: addr6(k.Addr), Port: v.Port, Proto: v.Proto}
+}
+
 // SetVIP builds a fresh inner table, swaps it into the outer map and only then
 // publishes the vip, so a packet never finds a vip whose table isn't there yet.
 func (p *Plane) SetVIP(id uint32, k controller.VIPKey, algo uint32, table []uint32) error {
@@ -99,6 +108,12 @@ func (p *Plane) SetVIP(id uint32, k controller.VIPKey, algo uint32, table []uint
 	}
 
 	val := ShieldVipVal{Id: id, Algo: algo, TableLen: uint32(len(table))}
+	if k.Addr.Is6() {
+		if err := p.objs.Vip6Map.Put(vipKey6(k), &val); err != nil {
+			return err
+		}
+		return p.objs.Vip6Addrs.Put(addr6(k.Addr), uint8(1))
+	}
 	if err := p.objs.VipMap.Put(vipKey(k), &val); err != nil {
 		return err
 	}
@@ -126,6 +141,21 @@ func fillTable(m *ebpf.Map, table []uint32) error {
 }
 
 func (p *Plane) DelVIP(id uint32, k controller.VIPKey) error {
+	if k.Addr.Is6() {
+		if err := p.delVIP6(k); err != nil {
+			return err
+		}
+	} else if err := p.delVIP4(k); err != nil {
+		return err
+	}
+
+	if err := p.objs.LbTables.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (p *Plane) delVIP4(k controller.VIPKey) error {
 	if err := p.objs.VipMap.Delete(vipKey(k)); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 		return err
 	}
@@ -144,39 +174,68 @@ func (p *Plane) DelVIP(id uint32, k controller.VIPKey) error {
 	if !still {
 		p.objs.VipAddrs.Delete(addr32(k.Addr))
 	}
+	return nil
+}
 
-	if err := p.objs.LbTables.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+func (p *Plane) delVIP6(k controller.VIPKey) error {
+	if err := p.objs.Vip6Map.Delete(vipKey6(k)); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 		return err
+	}
+
+	still := false
+	var key ShieldVipKey6
+	var val ShieldVipVal
+	it := p.objs.Vip6Map.Iterate()
+	for it.Next(&key, &val) {
+		if key.Addr == addr6(k.Addr) {
+			still = true
+			break
+		}
+	}
+	if !still {
+		p.objs.Vip6Addrs.Delete(addr6(k.Addr))
 	}
 	return nil
 }
 
-func lpmKey(p netip.Prefix) ShieldLpmKey {
-	return ShieldLpmKey{Prefixlen: uint32(p.Bits()), Addr: addr32(p.Addr())}
-}
-
-func (p *Plane) cidrMap(kind controller.CIDRKind) *ebpf.Map {
+func (p *Plane) cidrMaps(kind controller.CIDRKind) (v4, v6 *ebpf.Map) {
 	if kind == controller.Allow {
-		return p.objs.AllowCidr
+		return p.objs.AllowCidr, p.objs.AllowCidr6
 	}
-	return p.objs.DenyCidr
+	return p.objs.DenyCidr, p.objs.DenyCidr6
 }
 
-// SetCIDRs makes the trie match want exactly
+// SetCIDRs makes the tries match want exactly
 func (p *Plane) SetCIDRs(kind controller.CIDRKind, want []netip.Prefix) error {
-	m := p.cidrMap(kind)
-
-	wanted := map[ShieldLpmKey]bool{}
+	var k4 []ShieldLpmKey
+	var k6 []ShieldLpmKey6
 	for _, w := range want {
-		k := lpmKey(w.Masked())
-		wanted[k] = true
-		if err := m.Put(&k, &ShieldLpmVal{Flags: 1}); err != nil {
-			return fmt.Errorf("add %s: %w", w, err)
+		w = w.Masked()
+		if w.Addr().Is4() {
+			k4 = append(k4, ShieldLpmKey{Prefixlen: uint32(w.Bits()), Addr: addr32(w.Addr())})
+		} else {
+			k6 = append(k6, ShieldLpmKey6{Prefixlen: uint32(w.Bits()), Addr: addr6(w.Addr())})
 		}
 	}
 
-	var stale []ShieldLpmKey
-	var k ShieldLpmKey
+	m4, m6 := p.cidrMaps(kind)
+	if err := syncTrie(m4, k4); err != nil {
+		return err
+	}
+	return syncTrie(m6, k6)
+}
+
+func syncTrie[K comparable](m *ebpf.Map, want []K) error {
+	wanted := map[K]bool{}
+	for i := range want {
+		wanted[want[i]] = true
+		if err := m.Put(&want[i], &ShieldLpmVal{Flags: 1}); err != nil {
+			return fmt.Errorf("add cidr: %w", err)
+		}
+	}
+
+	var stale []K
+	var k K
 	var v ShieldLpmVal
 	it := m.Iterate()
 	for it.Next(&k, &v) {
@@ -200,11 +259,19 @@ func (p *Plane) Block(ip netip.Addr, ttl time.Duration) error {
 		ExpiresNs: nowMonotonic() + uint64(ttl),
 		Reason:    3,
 	}
+	if ip.Is6() {
+		return p.objs.DynBlocklist6.Put(addr6(ip), &v)
+	}
 	return p.objs.DynBlocklist.Put(addr32(ip), &v)
 }
 
 func (p *Plane) Unblock(ip netip.Addr) error {
-	err := p.objs.DynBlocklist.Delete(addr32(ip))
+	var err error
+	if ip.Is6() {
+		err = p.objs.DynBlocklist6.Delete(addr6(ip))
+	} else {
+		err = p.objs.DynBlocklist.Delete(addr32(ip))
+	}
 	if errors.Is(err, ebpf.ErrKeyNotExist) {
 		return nil
 	}
@@ -224,6 +291,22 @@ func (p *Plane) Blocked() ([]controller.BlockedEntry, error) {
 		}
 		out = append(out, controller.BlockedEntry{
 			Addr:      fromAddr32(k),
+			Reason:    v.Reason,
+			ExpiresIn: time.Duration(v.ExpiresNs - now),
+		})
+	}
+	if err := it.Err(); err != nil {
+		return nil, err
+	}
+
+	var k6 ShieldAddr6
+	it = p.objs.DynBlocklist6.Iterate()
+	for it.Next(&k6, &v) {
+		if v.ExpiresNs <= now {
+			continue
+		}
+		out = append(out, controller.BlockedEntry{
+			Addr:      netip.AddrFrom16(k6.B),
 			Reason:    v.Reason,
 			ExpiresIn: time.Duration(v.ExpiresNs - now),
 		})
