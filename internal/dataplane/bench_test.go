@@ -24,7 +24,12 @@ func benchPlane(b *testing.B) *Plane {
 	}
 	b.Cleanup(func() { p.Close() })
 
-	raw := strings.NewReplacer("syn_limit_pps: 5", "syn_limit_pps: 2000000000", "udp_limit_pps: 5", "udp_limit_pps: 2000000000").Replace(testCfg)
+	raw := strings.NewReplacer(
+		"syn_limit_pps: 5", "syn_limit_pps: 2000000000",
+		"udp_limit_pps: 5", "udp_limit_pps: 2000000000",
+		"deny: [198.51.100.0/24]", "deny: [198.51.100.0/24, 2001:db8:dead::/48]",
+		"vips:\n", "vips:\n  - {name: web6, address: \"2001:db8:100::10\", port: 443, backends: [{name: a}, {name: b}, {name: c}]}\n",
+	).Replace(testCfg)
 	cfg, err := config.Parse([]byte(raw))
 	if err != nil {
 		b.Fatal(err)
@@ -58,6 +63,9 @@ func BenchmarkXDP(b *testing.B) {
 		{"lb_tcp_syn", tcpFrame("1.1.1.2", 40001, syn)},
 		{"lb_udp_wrr", udpFrame("1.1.1.3", 5000)},
 		{"allowlisted_lb", tcpFrame("192.0.2.5", 40000, ack)},
+		{"v6_drop_denylist", tcp6("2001:db8:dead::5", 1234, syn)},
+		{"v6_lb_tcp_established", tcp6("2001:db8:1::1", 40000, ack)},
+		{"v6_lb_tcp_syn", tcp6("2001:db8:1::2", 40001, syn)},
 	}
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
