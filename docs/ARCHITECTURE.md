@@ -100,6 +100,10 @@ config.yaml ──► config.Load (strict parse, validation)
 - If every backend of a VIP fails health checks the table is built from all of them. Dropping everything is worse than trying.
 - A table identical to the one already installed is not rewritten.
 
+## Draining
+
+`drain: true` on a backend removes it from every Maglev/WRR table but leaves it `active` in `backend_map`, so conntrack hits keep going to it. Flows end on their own or age out of the LRU. If every backend of a VIP is drained or down the VIP falls back to using all of them rather than blackholing. After removing the backend from the config, its remaining flows rehash to somewhere else.
+
 ## Amplification filter
 
 `ddos.amplification.ports` lists UDP source ports used by reflection attacks. A UDP packet whose source port is in that list, aimed at one of our VIP addresses but matching no VIP (the destination port is a random victim port), is dropped when its UDP length is at least `min_size`. Nothing behind the balancer sent a query, so there is nothing legitimate to lose, unless a backend itself resolves through the VIP address: allowlist those. A VIP that really serves one of the ports (DNS on 53) is untouched because the VIP lookup happens first. Packets for addresses that aren't VIPs go to the host stack as before. Counted as `drop_amplification`.
