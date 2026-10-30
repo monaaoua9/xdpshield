@@ -30,6 +30,9 @@ type Server struct {
 	events Recent
 	token  string
 	gather prometheus.Gatherer
+
+	// nil means the endpoint answers 501
+	Reload func() error
 }
 
 func New(ctl Ctl, ev Recent, g prometheus.Gatherer, token string) *Server {
@@ -45,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/blocklist", s.auth(s.block))
 	mux.HandleFunc("DELETE /api/v1/blocklist/{ip}", s.auth(s.unblock))
 	mux.HandleFunc("GET /api/v1/events", s.recent)
+	mux.HandleFunc("POST /api/v1/reload", s.auth(s.reload))
 	return mux
 }
 
@@ -128,6 +132,18 @@ func (s *Server) unblock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) reload(w http.ResponseWriter, _ *http.Request) {
+	if s.Reload == nil {
+		fail(w, 501, "NOT_SUPPORTED", "reload is not wired up")
+		return
+	}
+	if err := s.Reload(); err != nil {
+		fail(w, 422, "RELOAD_REJECTED", err.Error())
+		return
+	}
+	ok(w, map[string]string{"result": "applied"}, nil)
 }
 
 func (s *Server) recent(w http.ResponseWriter, r *http.Request) {
