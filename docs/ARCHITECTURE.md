@@ -100,6 +100,10 @@ config.yaml ──► config.Load (strict parse, validation)
 - If every backend of a VIP fails health checks the table is built from all of them. Dropping everything is worse than trying.
 - A table identical to the one already installed is not rewritten.
 
+## Orphan TCP (drop_orphan_tcp)
+
+Off by default. With it on (and `ddos.enabled`), a TCP packet to a VIP that is not a plain SYN and has no conntrack entry is dropped (`drop_no_flow`) instead of being hashed to a backend. That kills ACK/RST floods at the VIP for the price of one map lookup. The trade-off is the same one HA relies on: a flow that arrives at a node which never saw its SYN (failover, ECMP rehash, a restart without `pin_path`) is dropped too, so the client has to reconnect. Leave it off for active/active setups unless connections are short.
+
 ## Restarts (pin_path)
 
 With `pin_path: /sys/fs/bpf/xdpshield` every map is pinned there by name and the XDP link is pinned as `xdp_link`. On the next start the loader reuses the pinned maps (conntrack, rate state, blocklist, counters, tables) instead of creating new ones and calls `Update` on the pinned link, which replaces the program atomically (linux 5.9+). When the process exits the datapath keeps forwarding with the last tables.

@@ -15,6 +15,7 @@ ddos:
   syn_limit_pps: 200      # per source ip per second, new connections only
   udp_limit_pps: 2000
   block_ttl: 60s
+  drop_orphan_tcp: false  # true = drop non-syn tcp with no tracked flow (ack/rst floods); breaks flows that fail over from another node
   amplification:          # drop reflected answers (src port below) that hit a vip address but no vip
     ports: [53, 123, 161, 389, 1900, 11211]
     min_size: 100         # udp length incl. header; smaller packets pass
