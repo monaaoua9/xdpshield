@@ -75,7 +75,7 @@ The datapath never decides policy. Thresholds, backend sets, weights and lists a
 | `lb_tables` | array of maps | controller | per-vip maglev or wrr table |
 | `rr_cursor` | percpu array | datapath | wrr position per vip |
 | `conn_track` | LRU hash | datapath | 5-tuple → backend id |
-| `rate_state` | LRU hash | datapath | per-source syn/udp counters in a 1s window |
+| `rate_state` | LRU hash | datapath | per-source syn/udp token bucket timestamps |
 | `dyn_blocklist` | LRU hash | datapath (+ admin api) | source → expiry, reason |
 | `deny_cidr`, `allow_cidr` | LPM trie | controller | permanent lists |
 | `stats`, `vip_stats`, `backend_stats` | percpu array | datapath | counters |

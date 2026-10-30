@@ -103,7 +103,7 @@ These are ceilings for the program on a slow laptop core, not NIC throughput: a 
 
 ## Status
 
-Unit tests pass. The program loads under the verifier of a 6.6 kernel (WSL2, clang 21) and all twelve `BPF_PROG_TEST_RUN` integration tests pass. The first load was rejected for an unbounded `tot_len` after the byte swap; that is fixed in `parsing.h`. `test/lab.sh` also ran on that kernel (generic XDP, netns): 20 requests to the VIP were answered through the IPIP path and the SYN flood got the client blocked. The lab backends share one /tmp, so it can't show the split between them; the integration tests cover that. Other kernels and NIC drivers (native XDP) have not been tried; CI runs the integration suite on every push.
+Unit tests pass. The program loads under the verifier of a 6.6 kernel (WSL2, clang 21) and the `BPF_PROG_TEST_RUN` integration tests (v4, v6, amplification, drain, rate limits) pass. The first load was rejected for an unbounded `tot_len` after the byte swap; that is fixed in `parsing.h`. `test/lab.sh` also ran on that kernel (generic XDP, netns): 20 requests to the VIP were answered through the IPIP path and the SYN flood got the client blocked. The lab backends share one /tmp, so it can't show the split between them; the integration tests cover that. Other kernels and NIC drivers (native XDP) have not been tried; CI runs the integration suite on every push.
 
 Known gaps are listed at the end of the architecture doc: v6 backends (v6 clients are tunnelled to v4 backends over 6in4), no SYN cookies.
 
