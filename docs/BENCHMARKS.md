@@ -1,11 +1,11 @@
 # xdpshield: benchmarks
 
-Measured 2026-10-30, after the IPv6, token bucket and clock-read changes (six repetitions, the first table of this day was three).
+Measured 2026-10-30, after the IPv6, token bucket and clock-read changes (six repetitions; the table taken earlier the same day used three and a slower phase of the core, it is not kept).
 
 | | |
 |---|---|
 | CPU | Intel i5-8365U, 1.6 GHz, 2 vCPUs given to WSL2, one core used |
-| Kernel | 6.6.87.2 (WSL2), generic XDP, no real NIC |
+| Kernel | 6.6.87.2 (WSL2); the program is run by `BPF_PROG_TEST_RUN`, no real NIC |
 | Toolchain | Go 1.27.0 (cross-compiled on Windows), BPF object from the repo |
 
 ## Measurement environment
