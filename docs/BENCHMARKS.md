@@ -8,6 +8,10 @@ Measured 2026-10-30, after the IPv6, token bucket and clock-read changes (six re
 | Kernel | 6.6.87.2 (WSL2), generic XDP, no real NIC |
 | Toolchain | Go 1.27.0 (cross-compiled on Windows), BPF object from the repo |
 
+## Measurement environment
+
+The machine is a low-spec laptop with 8 GB of RAM, running Windows 11 with WSL2 limited to 2 vCPUs. While measuring it usually had about six terminals open and the C: drive was nearly full. All of that adds noise: timings varied 2-5x between runs, and the core alternates between a fast and a roughly 6x slower phase. So single runs mean nothing here. Old-vs-new comparisons are done interleaved in one session and read as best-of or medians, and every table says how it was taken. Treat absolute numbers as indicative only.
+
 ## What is measured
 
 The cost of the XDP program itself, using `BPF_PROG_TEST_RUN`: the kernel runs the program on a crafted packet N times and reports its own timing. No driver, no DMA, no skb, no packet generation. These are ceilings for the program on a slow laptop core, not NIC throughput.
